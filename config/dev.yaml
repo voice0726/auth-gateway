@@ -1,0 +1,43 @@
+env: dev
+server_addr: ":8800"
+
+db_host: "localhost"
+db_port: 15432
+db_user: "postgres"
+db_password: "postgres"
+db_name: "auth"
+db_sslmode: "disable"
+db_timezone: "Asia/Tokyo"
+
+zitadel_issuer: "localhost"
+zitadel_client_id: "352687462331514883"
+zitadel_client_secret: ""
+zitadel_redirect_uri: "http://localhost:8800/auth/callback"
+zitadel_scopes:
+  - openid
+  - profile
+  - email
+zitadel_port: 8080
+zitadel_insecure: true
+
+session_secret: "0123456789abcdef0123456789abcdef"
+session_ttl: 24h
+state_ttl: 10m
+frontend_redirect_url: "http://localhost:3000"
+
+cookie_name: "session_id"
+cookie_secure: true
+cookie_domain: ""
+cookie_same_site: "Lax"
+
+log_level: "info"
+log_format: "pretty"
+internal_token: "replace-with-internal-token"
+
+cors_allow_origins:
+  - "http://localhost:3000"
+
+redis_addr: "localhost:16379"
+redis_password: ""
+redis_db: 0
+redis_prefix: "auth-gateway"
