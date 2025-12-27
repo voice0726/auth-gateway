@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/zitadel/oidc/v3/pkg/crypto"
+	"go.uber.org/zap"
 
 	"github.com/voice0726/auth-gateway/internal/config"
 	"github.com/voice0726/auth-gateway/internal/model"
@@ -20,12 +21,14 @@ var errInvalidSession = errors.New("invalid session")
 type Handler struct {
 	cfg     config.Config
 	service *service.AuthService
+	logger  *zap.Logger
 }
 
-func NewHandler(cfg config.Config, service *service.AuthService) (*Handler, error) {
+func NewHandler(cfg config.Config, service *service.AuthService, logger *zap.Logger) (*Handler, error) {
 	return &Handler{
 		cfg:     cfg,
 		service: service,
+		logger:  logger,
 	}, nil
 }
 
@@ -57,21 +60,39 @@ func (s *Handler) Callback(c echo.Context) error {
 
 func (s *Handler) Logout(c echo.Context) error {
 	redirect := c.QueryParam("redirect")
+	s.logger.Debug("logout request received",
+		zap.String("redirect", redirect),
+	)
 
 	sessionID, err := s.sessionIDFromRequest(c.Request())
 	if err != nil {
+		s.logger.Debug("logout request missing session",
+			zap.String("error", err.Error()),
+		)
 		s.clearSessionCookie(c)
 		return c.NoContent(http.StatusNoContent)
 	}
 
 	ok, err := s.service.HandleLogout(c.Response().Writer, c.Request(), sessionID, redirect)
 	if err != nil {
+		s.logger.Debug("logout request failed",
+			zap.String("session_id_prefix", statePrefix(sessionID)),
+			zap.Error(err),
+		)
 		return echo.NewHTTPError(http.StatusInternalServerError, "logout failed")
 	}
 	s.clearSessionCookie(c)
 	if ok {
+		s.logger.Debug("logout request completed",
+			zap.String("session_id_prefix", statePrefix(sessionID)),
+			zap.Bool("idp_redirected", ok),
+		)
 		return nil
 	}
+	s.logger.Debug("logout request completed without redirect",
+		zap.String("session_id_prefix", statePrefix(sessionID)),
+		zap.Bool("idp_redirected", ok),
+	)
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -164,4 +185,11 @@ func (s *Handler) clearSessionCookie(c echo.Context) {
 		cookie.Domain = s.cfg.CookieDomain
 	}
 	c.SetCookie(cookie)
+}
+
+func statePrefix(value string) string {
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8]
 }

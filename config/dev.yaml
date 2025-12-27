@@ -30,7 +30,7 @@ cookie_secure: true
 cookie_domain: ""
 cookie_same_site: "Lax"
 
-log_level: "info"
+log_level: "debug"
 log_format: "pretty"
 internal_token: "replace-with-internal-token"
 
