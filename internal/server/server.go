@@ -50,7 +50,7 @@ func NewEcho(cfg config.Config, logger *zap.Logger) *echo.Echo {
 func RegisterRoutes(e *echo.Echo, cfg config.Config, authHandler *authhandler.Handler) {
 	e.GET("/auth/login", authHandler.Login)
 	e.GET("/auth/callback", authHandler.Callback)
-	e.POST("/auth/logout", authHandler.Logout)
+	e.GET("/auth/logout", authHandler.Logout)
 	e.GET("/auth/me", authHandler.Me)
 
 	internal := e.Group("/internal", internalAuth(cfg))
