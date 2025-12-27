@@ -19,7 +19,23 @@ func NewEcho(cfg config.Config, logger *zap.Logger) *echo.Echo {
 	e.HideBanner = true
 	e.HidePort = true
 	e.Use(middleware.Recover())
-	e.Use(requestLogger(logger))
+	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
+		LogMethod:   true,
+		LogURIPath:  true,
+		LogStatus:   true,
+		LogLatency:  true,
+		LogRemoteIP: true,
+		LogValuesFunc: func(c echo.Context, v middleware.RequestLoggerValues) error {
+			logger.Info("request",
+				zap.String("method", v.Method),
+				zap.String("path", v.URIPath),
+				zap.Int("status", v.Status),
+				zap.Duration("latency", v.Latency),
+				zap.String("remote", v.RemoteIP),
+			)
+			return nil
+		},
+	}))
 	if len(cfg.CORSAllowOrigins) > 0 {
 		e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 			AllowOrigins:     cfg.CORSAllowOrigins,
