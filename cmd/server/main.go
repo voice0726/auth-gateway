@@ -2,6 +2,8 @@ package main
 
 import (
 	"go.uber.org/fx"
+	"go.uber.org/fx/fxevent"
+	"go.uber.org/zap"
 
 	"github.com/voice0726/auth-gateway/internal/config"
 	authhandler "github.com/voice0726/auth-gateway/internal/handler/auth"
@@ -27,6 +29,9 @@ func main() {
 			authhandler.NewHandler,
 			server.NewEcho,
 		),
+		fx.WithLogger(func(log *zap.Logger) fxevent.Logger {
+			return &fxevent.ZapLogger{Logger: log}
+		}),
 		fx.Invoke(
 			server.RegisterRoutes,
 			server.Run,
