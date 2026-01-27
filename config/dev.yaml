@@ -23,7 +23,7 @@ zitadel_insecure: true
 session_secret: "0123456789abcdef0123456789abcdef"
 session_ttl: 24h
 state_ttl: 10m
-frontend_redirect_url: "http://localhost:3000"
+frontend_post_logout_url: "http://localhost:3000"
 
 cookie_name: "session_id"
 cookie_secure: true

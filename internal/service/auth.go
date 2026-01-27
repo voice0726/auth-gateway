@@ -34,7 +34,7 @@ func NewAuthService(cfg config.Config, identityProvider IdentityProvider, sessio
 
 func (s *AuthService) StartLogin(w http.ResponseWriter, r *http.Request, redirect string) error {
 	if redirect == "" {
-		redirect = s.cfg.FrontendRedirectURL
+		redirect = s.cfg.FrontendPostLogoutURL
 	}
 	state := uuid.NewString()
 	s.logger.Debug("login start",
@@ -73,7 +73,7 @@ func (s *AuthService) HandleCallback(w http.ResponseWriter, r *http.Request, ses
 
 func (s *AuthService) HandleLogout(w http.ResponseWriter, r *http.Request, sessionID string, redirect string) (bool, error) {
 	if redirect == "" {
-		redirect = s.cfg.FrontendRedirectURL
+		redirect = s.cfg.FrontendPostLogoutURL
 	}
 	s.logger.Debug("logout start",
 		zap.String("redirect", redirect),

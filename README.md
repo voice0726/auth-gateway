@@ -36,7 +36,7 @@ ZITADEL を使った認証・セッション管理用の Auth Gateway です。�
 - `session_secret` (16/24/32 bytes)
 - `session_ttl`
 - `state_ttl`
-- `frontend_redirect_url`
+- `frontend_post_logout_url`
 - `cookie_name`
 - `cookie_secure`
 - `cookie_domain`

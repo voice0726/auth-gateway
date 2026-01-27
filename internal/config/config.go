@@ -35,7 +35,7 @@ type Config struct {
 	SessionTTL    time.Duration
 	StateTTL      time.Duration
 
-	FrontendRedirectURL string
+	FrontendPostLogoutURL string
 
 	CookieName     string
 	CookieSecure   bool
@@ -79,7 +79,7 @@ type rawConfig struct {
 	SessionTTL    time.Duration `yaml:"session_ttl"`
 	StateTTL      time.Duration `yaml:"state_ttl"`
 
-	FrontendRedirectURL string `yaml:"frontend_redirect_url"`
+	FrontendPostLogoutURL string `yaml:"frontend_post_logout_url"`
 
 	CookieName     string `yaml:"cookie_name"`
 	CookieSecure   bool   `yaml:"cookie_secure"`
@@ -116,38 +116,38 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		Env:                 raw.Env,
-		ServerAddr:          raw.ServerAddr,
-		DBHost:              raw.DBHost,
-		DBPort:              raw.DBPort,
-		DBUser:              raw.DBUser,
-		DBPassword:          raw.DBPassword,
-		DBName:              raw.DBName,
-		DBSSLMode:           raw.DBSSLMode,
-		DBTimeZone:          raw.DBTimeZone,
-		ZitadelIssuer:       raw.ZitadelIssuer,
-		ZitadelClientID:     raw.ZitadelClientID,
-		ZitadelClientSecret: raw.ZitadelClientSecret,
-		ZitadelRedirectURI:  raw.ZitadelRedirectURI,
-		ZitadelScopes:       normalizeScopes(raw.ZitadelScopes),
-		ZitadelPort:         raw.ZitadelPort,
-		ZitadelInsecure:     raw.ZitadelInsecure,
-		SessionSecret:       raw.SessionSecret,
-		SessionTTL:          raw.SessionTTL,
-		StateTTL:            raw.StateTTL,
-		FrontendRedirectURL: raw.FrontendRedirectURL,
-		CookieName:          raw.CookieName,
-		CookieSecure:        raw.CookieSecure,
-		CookieDomain:        raw.CookieDomain,
-		CookieSameSite:      parseSameSite(raw.CookieSameSite),
-		LogLevel:            raw.LogLevel,
-		LogFormat:           raw.LogFormat,
-		InternalToken:       raw.InternalToken,
-		CORSAllowOrigins:    raw.CORSAllowOrigins,
-		RedisAddr:           raw.RedisAddr,
-		RedisPassword:       raw.RedisPassword,
-		RedisDB:             raw.RedisDB,
-		RedisPrefix:         raw.RedisPrefix,
+		Env:                   raw.Env,
+		ServerAddr:            raw.ServerAddr,
+		DBHost:                raw.DBHost,
+		DBPort:                raw.DBPort,
+		DBUser:                raw.DBUser,
+		DBPassword:            raw.DBPassword,
+		DBName:                raw.DBName,
+		DBSSLMode:             raw.DBSSLMode,
+		DBTimeZone:            raw.DBTimeZone,
+		ZitadelIssuer:         raw.ZitadelIssuer,
+		ZitadelClientID:       raw.ZitadelClientID,
+		ZitadelClientSecret:   raw.ZitadelClientSecret,
+		ZitadelRedirectURI:    raw.ZitadelRedirectURI,
+		ZitadelScopes:         normalizeScopes(raw.ZitadelScopes),
+		ZitadelPort:           raw.ZitadelPort,
+		ZitadelInsecure:       raw.ZitadelInsecure,
+		SessionSecret:         raw.SessionSecret,
+		SessionTTL:            raw.SessionTTL,
+		StateTTL:              raw.StateTTL,
+		FrontendPostLogoutURL: raw.FrontendPostLogoutURL,
+		CookieName:            raw.CookieName,
+		CookieSecure:          raw.CookieSecure,
+		CookieDomain:          raw.CookieDomain,
+		CookieSameSite:        parseSameSite(raw.CookieSameSite),
+		LogLevel:              raw.LogLevel,
+		LogFormat:             raw.LogFormat,
+		InternalToken:         raw.InternalToken,
+		CORSAllowOrigins:      raw.CORSAllowOrigins,
+		RedisAddr:             raw.RedisAddr,
+		RedisPassword:         raw.RedisPassword,
+		RedisDB:               raw.RedisDB,
+		RedisPrefix:           raw.RedisPrefix,
 	}
 
 	if cfg.ZitadelPort == 0 {
@@ -196,8 +196,8 @@ func validate(cfg Config) error {
 	if cfg.SessionSecret == "" {
 		missing = append(missing, "session_secret")
 	}
-	if cfg.FrontendRedirectURL == "" {
-		missing = append(missing, "frontend_redirect_url")
+	if cfg.FrontendPostLogoutURL == "" {
+		missing = append(missing, "frontend_post_logout_url")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required config fields: %s", strings.Join(missing, ", "))
