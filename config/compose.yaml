@@ -1,0 +1,44 @@
+env: dev
+server_addr: ":8800"
+app_host: "http://app.localtest.me"
+
+db_host: "db"
+db_port: 5432
+db_user: "postgres"
+db_password: "postgres"
+db_name: "auth"
+db_sslmode: "disable"
+db_timezone: "Asia/Tokyo"
+
+zitadel_issuer: "auth.localtest.me"
+zitadel_client_id: "354500420372004868"
+zitadel_client_secret: ""
+zitadel_redirect_uri: "http://auth.localtest.me/auth/callback"
+zitadel_scopes:
+  - openid
+  - profile
+  - email
+zitadel_port: 8080
+zitadel_insecure: true
+
+session_secret: "0123456789abcdef0123456789abcdef"
+session_ttl: 24h
+state_ttl: 10m
+frontend_post_logout_url: "http://app.localtest.me/logout"
+
+cookie_name: "session_id"
+cookie_secure: false
+cookie_domain: "localtest.me"
+cookie_same_site: "Lax"
+
+log_level: "debug"
+log_format: "pretty"
+internal_token: "replace-with-internal-token"
+
+cors_allow_origins:
+  - "http://app.localtest.me"
+
+redis_addr: "redis:6379"
+redis_password: ""
+redis_db: 0
+redis_prefix: "auth-gateway"
