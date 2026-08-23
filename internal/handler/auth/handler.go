@@ -41,9 +41,16 @@ func (s *Handler) Login(c echo.Context) error {
 }
 
 func (s *Handler) Callback(c echo.Context) error {
+	// Ignore React Server Components prefetch requests to avoid consuming OIDC state twice.
+	if c.QueryParam("_rsc") != "" {
+		return c.NoContent(http.StatusNoContent)
+	}
 	sessionID := uuid.NewString()
 	redirect, sess, err := s.service.HandleCallback(c.Response().Writer, c.Request(), sessionID)
 	if err != nil {
+		if c.Response().Committed {
+			return nil
+		}
 		if errors.Is(err, service.ErrNotAuthenticated) {
 			return echo.NewHTTPError(http.StatusUnauthorized, "not authenticated")
 		}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -40,6 +41,8 @@ func (s *AuthService) StartLogin(w http.ResponseWriter, r *http.Request, redirec
 	s.logger.Debug("login start",
 		zap.String("redirect", redirect),
 		zap.String("state_prefix", statePrefix(state)),
+		zap.String("referer", r.Referer()),
+		zap.String("user_agent", r.UserAgent()),
 	)
 	if err := s.stateSrv.Set(state, redirect, time.Now().Add(s.cfg.StateTTL)); err != nil {
 		return err
@@ -50,7 +53,10 @@ func (s *AuthService) StartLogin(w http.ResponseWriter, r *http.Request, redirec
 
 func (s *AuthService) HandleCallback(w http.ResponseWriter, r *http.Request, sessionID string) (string, model.Session, error) {
 	s.logger.Debug("callback start",
-		zap.String("session_id_prefix", statePrefix(sessionID)),
+		zap.String("state_prefix", statePrefix(r.URL.Query().Get("state"))),
+		zap.String("referer", r.Referer()),
+		zap.String("user_agent", r.UserAgent()),
+		zap.String("raw_query", r.URL.RawQuery),
 	)
 	sess, state, err := s.idp.Callback(w, r, sessionID)
 	if err != nil {
@@ -87,13 +93,21 @@ func (s *AuthService) HandleLogout(w http.ResponseWriter, r *http.Request, sessi
 		)
 		return false, nil
 	}
-	_ = s.sessionSrv.Delete(sessionID)
+	postIdpLogoutURL := fmt.Sprintf("%s/%s", s.cfg.AppHost, "/auth/logout?redirect="+redirect)
 	state := uuid.NewString()
-	ok := s.idp.Logout(w, r, sess, state, redirect)
+	ok, err := s.idp.Logout(w, r, sess, state, postIdpLogoutURL)
+	if err != nil {
+		return false, err
+	}
+	err = s.sessionSrv.Delete(sessionID)
+	if err != nil {
+		s.logger.Debug("logout failed to delete session", zap.Error(err))
+	}
 	s.logger.Debug("logout completed",
 		zap.Bool("idp_redirected", ok),
 		zap.String("state_prefix", statePrefix(state)),
 	)
+
 	return ok, nil
 }
 

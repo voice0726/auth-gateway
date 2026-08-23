@@ -2,6 +2,7 @@ package zitadel
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -90,9 +91,9 @@ func (c *Client) Callback(w http.ResponseWriter, r *http.Request, sessionID stri
 	return sess, state, nil
 }
 
-func (c *Client) Logout(w http.ResponseWriter, r *http.Request, sess model.Session, state string, redirect string) bool {
+func (c *Client) Logout(w http.ResponseWriter, r *http.Request, sess model.Session, state string, redirect string) (bool, error) {
 	if sess.IDToken == "" {
-		return false
+		return false, errors.New("id token is empty")
 	}
 	ctx := &openid.UserInfoContext[*oidc.IDTokenClaims, *oidc.UserInfo]{
 		Tokens: &oidc.Tokens[*oidc.IDTokenClaims]{
@@ -105,7 +106,7 @@ func (c *Client) Logout(w http.ResponseWriter, r *http.Request, sess model.Sessi
 		},
 	}
 	c.handler.Logout(w, r, ctx, state, redirect)
-	return true
+	return true, nil
 }
 
 func (c *Client) buildSession(id string, authCtx *openid.UserInfoContext[*oidc.IDTokenClaims, *oidc.UserInfo]) (model.Session, error) {

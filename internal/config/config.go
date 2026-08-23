@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Env        string
 	ServerAddr string
+	AppHost    string
 
 	DBHost     string
 	DBPort     int
@@ -80,6 +81,7 @@ type rawConfig struct {
 	StateTTL      time.Duration `yaml:"state_ttl"`
 
 	FrontendPostLogoutURL string `yaml:"frontend_post_logout_url"`
+	AppHost               string `yaml:"app_host"`
 
 	CookieName     string `yaml:"cookie_name"`
 	CookieSecure   bool   `yaml:"cookie_secure"`
@@ -136,6 +138,7 @@ func Load() (Config, error) {
 		SessionTTL:            raw.SessionTTL,
 		StateTTL:              raw.StateTTL,
 		FrontendPostLogoutURL: raw.FrontendPostLogoutURL,
+		AppHost:               raw.AppHost,
 		CookieName:            raw.CookieName,
 		CookieSecure:          raw.CookieSecure,
 		CookieDomain:          raw.CookieDomain,
