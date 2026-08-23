@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: zitadel
+  name: zitadel
+spec:
+  ports:
+    - name: "8080"
+      port: 8080
+      targetPort: 8080
+    - name: "4000"
+      port: 4000
+      targetPort: 3000
+  selector:
+    app: zitadel

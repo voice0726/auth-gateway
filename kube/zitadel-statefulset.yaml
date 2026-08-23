@@ -1,0 +1,115 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zitadel
+  namespace: auth-gateway
+spec:
+  serviceName: zitadel
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zitadel
+  template:
+    metadata:
+      labels:
+        app: zitadel
+    spec:
+      containers:
+        - name: zitadel
+          image: ghcr.io/zitadel/zitadel:latest
+          command:
+            [
+              "start-from-init",
+              "--masterkey",
+              "MasterkeyNeedsToHave32Characters",
+            ]
+          env:
+            - name: ZITADEL_EXTERNALDOMAIN
+              value: "auth.localtest.me"
+            - name: ZITADEL_EXTERNALSECURE
+              value: "false"
+            - name: ZITADEL_TLS_ENABLED
+              value: "false"
+            - name: ZITADEL_DATABASE_POSTGRES_HOST
+              value: "db"
+            - name: ZITADEL_DATABASE_POSTGRES_PORT
+              value: "5432"
+            - name: ZITADEL_DATABASE_POSTGRES_DATABASE
+              value: "zitadel"
+            - name: ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME
+              value: "postgres"
+            - name: ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD
+              value: "postgres"
+            - name: ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE
+              value: "disable"
+            - name: ZITADEL_DATABASE_POSTGRES_USER_USERNAME
+              value: "zitadel"
+            - name: ZITADEL_DATABASE_POSTGRES_USER_PASSWORD
+              value: "zitadel"
+            - name: ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE
+              value: "disable"
+            - name: ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH
+              value: "/current-dir/login-client.pat"
+            - name: ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED
+              value: "false"
+            - name: ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME
+              value: "login-client"
+            - name: ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME
+              value: "Automatically Initialized IAM_LOGIN_CLIENT"
+            - name: ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE
+              value: "2029-01-01T00:00:00Z"
+            - name: ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED
+              value: "true"
+            - name: ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI
+              value: "http://auth.localtest.me:4000/ui/v2/login"
+            - name: ZITADEL_OIDC_DEFAULTLOGINURLV2
+              value: "http://auth.localtest.me:4000/ui/v2/login/login?authRequest="
+            - name: ZITADEL_OIDC_DEFAULTLOGOUTURLV2
+              value: "http://auth.localtest.me:4000/ui/v2/login/logout?post_logout_redirect="
+            - name: ZITADEL_SAML_DEFAULTLOGINURLV2
+              value: "http://auth.localtest.me:4000/ui/v2/login/login?samlRequest="
+            - name: ZITADEL_LOG_LEVEL
+              value: "debug"
+          ports:
+            - containerPort: 8080
+            - containerPort: 3000
+            - containerPort: 8800
+          volumeMounts:
+            - name: zitadel-current-dir
+              mountPath: /current-dir
+        - name: login
+          image: ghcr.io/zitadel/zitadel-login:latest
+          env:
+            - name: ZITADEL_API_URL
+              value: "http://localhost:8080"
+            - name: CUSTOM_REQUEST_HEADERS
+              value: "Host:auth.localtest.me"
+            - name: NEXT_PUBLIC_BASE_PATH
+              value: "/ui/v2/login"
+            - name: ZITADEL_SERVICE_USER_TOKEN_FILE
+              value: "/current-dir/login-client.pat"
+          volumeMounts:
+            - name: zitadel-current-dir
+              mountPath: /current-dir
+        - name: migrate
+          image: ghcr.io/zitadel/zitadel:latest
+          command: ["migrate"]
+          env:
+            - name: ZITADEL_DATABASE_POSTGRES_HOST
+              value: "db"
+            - name: ZITADEL_DATABASE_POSTGRES_PORT
+              value: "5432"
+            - name: ZITADEL_DATABASE_POSTGRES_DATABASE
+              value: "zitadel"
+            - name: ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME
+              value: "postgres"
+            - name: ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD
+              value: "postgres"
+            - name: ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE
+              value: "disable"
+          volumeMounts:
+            - name: zitadel-current-dir
+              mountPath: /current-dir
+      volumes:
+        - name: zitadel-current-dir
+          emptyDir: {}
