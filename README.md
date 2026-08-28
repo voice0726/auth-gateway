@@ -38,6 +38,7 @@ ZITADEL を使った認証・セッション管理用の Auth Gateway です。�
 - `state_ttl`
 - `frontend_post_logout_url`
 - `app_host`
+- `frontend_origin` (logout POST の Origin 検証に使う frontend の origin)
 - `cookie_name`
 - `cookie_secure`
 - `cookie_domain`

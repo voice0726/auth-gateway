@@ -37,6 +37,7 @@ type Config struct {
 	StateTTL      time.Duration
 
 	FrontendPostLogoutURL string
+	FrontendOrigin        string
 
 	CookieName     string
 	CookieSecure   bool
@@ -81,6 +82,7 @@ type rawConfig struct {
 	StateTTL      time.Duration `yaml:"state_ttl"`
 
 	FrontendPostLogoutURL string `yaml:"frontend_post_logout_url"`
+	FrontendOrigin        string `yaml:"frontend_origin"`
 	AppHost               string `yaml:"app_host"`
 
 	CookieName     string `yaml:"cookie_name"`
@@ -138,6 +140,7 @@ func Load() (Config, error) {
 		SessionTTL:            raw.SessionTTL,
 		StateTTL:              raw.StateTTL,
 		FrontendPostLogoutURL: raw.FrontendPostLogoutURL,
+		FrontendOrigin:        raw.FrontendOrigin,
 		AppHost:               raw.AppHost,
 		CookieName:            raw.CookieName,
 		CookieSecure:          raw.CookieSecure,
@@ -201,6 +204,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.FrontendPostLogoutURL == "" {
 		missing = append(missing, "frontend_post_logout_url")
+	}
+	if cfg.FrontendOrigin == "" {
+		return errors.New("frontend_origin is required")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required config fields: %s", strings.Join(missing, ", "))

@@ -1,6 +1,7 @@
 env: dev
 server_addr: ":8800"
 app_host: "http://app.localtest.me"
+frontend_origin: "http://localhost:5173"
 
 db_host: "localhost"
 db_port: 15432
