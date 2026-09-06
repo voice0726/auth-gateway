@@ -11,6 +11,7 @@ var ErrSessionNotFound = errors.New("session not found")
 var ErrSessionExpired = errors.New("session expired")
 
 type Session struct {
+	AppID        string       `gorm:"index;size:64"`
 	ID           string       `gorm:"primaryKey;size:64"`
 	UserID       string       `gorm:"size:255"`
 	Email        string       `gorm:"size:255"`

@@ -2,7 +2,6 @@ package zitadel
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,7 +12,6 @@ import (
 	"github.com/zitadel/zitadel-go/v3/pkg/authentication"
 	openid "github.com/zitadel/zitadel-go/v3/pkg/authentication/oidc"
 	"github.com/zitadel/zitadel-go/v3/pkg/zitadel"
-	"golang.org/x/oauth2"
 
 	"github.com/voice0726/auth-gateway/internal/config"
 	"github.com/voice0726/auth-gateway/internal/model"
@@ -89,24 +87,6 @@ func (c *Client) Callback(w http.ResponseWriter, r *http.Request, sessionID stri
 		return model.Session{}, state, err
 	}
 	return sess, state, nil
-}
-
-func (c *Client) Logout(w http.ResponseWriter, r *http.Request, sess model.Session, state string, redirect string) (bool, error) {
-	if sess.IDToken == "" {
-		return false, errors.New("id token is empty")
-	}
-	ctx := &openid.UserInfoContext[*oidc.IDTokenClaims, *oidc.UserInfo]{
-		Tokens: &oidc.Tokens[*oidc.IDTokenClaims]{
-			Token: &oauth2.Token{
-				AccessToken:  sess.AccessToken,
-				RefreshToken: sess.RefreshToken,
-				Expiry:       sess.ExpiresAt,
-			},
-			IDToken: sess.IDToken,
-		},
-	}
-	c.handler.Logout(w, r, ctx, state, redirect)
-	return true, nil
 }
 
 func (c *Client) buildSession(id string, authCtx *openid.UserInfoContext[*oidc.IDTokenClaims, *oidc.UserInfo]) (model.Session, error) {

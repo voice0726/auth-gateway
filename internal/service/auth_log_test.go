@@ -39,7 +39,7 @@ func (logTestSession) Delete(string) error               { return nil }
 func TestAuthServiceLogsContainNoOAuthOrSessionSecrets(t *testing.T) {
 	var logs bytes.Buffer
 	logger := zap.New(zapcore.NewCore(zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig()), zapcore.AddSync(&logs), zap.DebugLevel))
-	service := NewAuthService(config.Config{AppHost: "http://localhost:4000", StateTTL: time.Hour}, logTestIDP{}, logTestSession{}, logTestState{}, logger)
+	service := NewAuthService(config.Config{StateTTL: time.Hour}, logTestIDP{}, logTestSession{}, logTestState{}, logger)
 	secretRedirect := "/dashboard?secret=redirect-secret"
 	req := httptest.NewRequest(http.MethodGet, "/auth/login?redirect="+secretRedirect, nil)
 	req.Header.Set("Referer", "https://example.test/referrer-secret")

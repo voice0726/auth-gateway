@@ -1,63 +1,82 @@
 # auth-gateway
 
-ZITADEL を使った認証・セッション管理用の Auth Gateway です。フロントは `session_id` Cookie のみを保持し、
-認証フローとセッション管理は本サービスが担当します。
+ZITADELの本人確認を使い、アプリごとに独立したCookieセッションを提供します。gatewayプロセス・PostgreSQL・Redisは共有します。
 
-## 主要エンドポイント
+## 責任境界
 
-- `GET /auth/login` : 認証開始 (Authorization Code + PKCE)
-- `GET /auth/callback` : 認証コールバック
-- `POST /auth/logout` : ログアウト
-- `GET /auth/me` : フロント向けのユーザー情報取得
-- `GET /internal/session` : BFF 向けのユーザー情報取得
+| 保存先 | 所有者と役割 |
+| --- | --- |
+| PostgreSQL `zitadel` | ZITADEL。アカウントと本人確認を管理 |
+| PostgreSQL `auth` の `sessions` | gateway。`app_id` ごとにセッションを保存・検索・削除 |
+| Redis | gateway。アプリ別のキープレフィックスでログイン途中のstateと遷移先を保存 |
+| 各アプリの業務DB | 各バックエンド。業務データと操作権限を管理 |
 
-## 設定 (YAML)
+通常のログアウトは対象アプリのセッションとCookieだけを削除します。ZITADELのログイン状態は維持するので、別アプリではパスワードを再入力せず本人確認が完了する場合があります。
 
-`config/dev.yaml` を読み込みます。別のパスを使う場合は `CONFIG_PATH` を指定してください。
+## 接続契約
 
-### 設定項目
+ブラウザはアプリと同じオリジンの `/auth/*` を使います。アプリのリバースプロキシは、固定されたアプリIDを付けてgatewayへ転送します。Reactの例：
 
-- `env`
-- `server_addr`
-- `db_host`
-- `db_port`
-- `db_user`
-- `db_password`
-- `db_name`
-- `db_sslmode`
-- `db_timezone`
-- `zitadel_issuer`
-- `zitadel_client_id`
-- `zitadel_client_secret` (PKCE では未使用)
-- `zitadel_redirect_uri`
-- `zitadel_scopes`
-- `zitadel_port`
-- `zitadel_insecure` (http 利用時は true)
-- `session_secret` (16/24/32 bytes)
-- `session_ttl`
-- `state_ttl`
-- `frontend_post_logout_url`
-- `app_host`
-- `frontend_origin` (logout POST の Origin 検証に使う frontend の origin)
-- `cookie_name`
-- `cookie_secure`
-- `cookie_domain`
-- `cookie_same_site` (Lax/Strict/None)
-- `log_level`
-- `log_format` (pretty/json)
-- `internal_token`
-- `cors_allow_origins`
-- `redis_addr`
-- `redis_password`
-- `redis_db`
-- `redis_prefix`
+| 呼び出し元 | 公開パス | gatewayのパス |
+| --- | --- | --- |
+| ブラウザ | `GET /auth/login?redirect=/dashboard` | `GET /auth/react-app-playground/login`（クエリを維持） |
+| ZITADELからの復帰 | `GET /auth/callback` | `GET /auth/react-app-playground/callback` |
+| ブラウザ | `GET /auth/me` | `GET /auth/react-app-playground/me` |
+| ブラウザ | `POST /auth/logout` | `POST /auth/react-app-playground/logout` |
+| Reactバックエンド | 公開しない | `GET /internal/react-app-playground/session` |
 
-※ `zitadel_issuer` はホスト名のみを指定します（例: `localhost`）。
+内部APIはアプリ専用の `X-Internal-Token` と転送されたCookieを要求します。アプリIDは認証情報ではありません。プロキシでは固定のアプリIDを使い、`/internal/*` をブラウザへ公開しないでください。
 
-## 起動
+Cookie名は `session_<アプリID>`、Domainなし、Path `/`、HttpOnlyです。アプリごとに暗号鍵を分け、別アプリのCookieを名前だけ変更しても使用できないようにします。OIDCライブラリの一時Cookieも分離するため、アプリには異なるホスト名が必要です。`localhost` のポート違いだけでは分離しません。
 
-```bash
-# config/dev.yaml を編集
+ログイン後の遷移先は同一オリジンの相対パスに限定します。POSTログアウトは対象アプリのOriginを検証します。旧 `/auth/me`、`/internal/session` などアプリIDを持たないgatewayのパスは提供しません。
 
-go run ./cmd/server
+## 設定と起動
+
+既定は `config/dev.yaml`、Composeでは `config/compose.yaml` を使用します。`CONFIG_PATH` で変更できます。DB・Redis・ZITADELの接続設定は共有し、`applications` に次を登録します。
+
+- `id`: 小文字英数字・ハイフンの一意なアプリID
+- `origin`: パスなしのアプリURL。ホスト名はアプリごとに分ける
+- `client_id`: ZITADELで登録したアプリ専用のOIDCクライアントID
+- `session_secret`: アプリ専用の16/24/32バイトAES鍵
+- `internal_token`: アプリ専用の内部API認証情報
+
+設定例の鍵とトークンは開発用の固定値です。実環境ではアプリごとに別の値を用意し、各バックエンドと一致させます。旧単一アプリ形式の設定は受け付けません。
+
+Reactの開発URLは `http://react.localtest.me:5174`。ZITADELの対象OIDCクライアントにリダイレクトURI `http://react.localtest.me:5174/auth/callback` を登録します。gatewayのポートは `8800`、Reactバックエンドは `18080` です。Viteのプロキシ設定は本番ビルドには含まれないため、本番にも同じパス変換を持つリバースプロキシが必要です。
+
+```sh
+docker compose up -d db redis
+docker compose --profile tools run --build --rm migrate
+docker compose up -d --build gateway login
 ```
+
+Podman環境では同じ引数を `podman compose` に渡します。ZITADELはgateway/loginの依存サービスとして起動します。OIDCクライアントの登録と実環境の設定は先に済ませてください。
+
+`migrate` は接続先のPostgreSQLに `auth` DBがなければ作成し、セッションテーブルを作成・更新します。通常のgateway起動ではDB作成やmigrationは実行しません。DB作成には実行ユーザーのCREATEDB権限が必要です。
+
+PostgreSQLイメージの初回初期化スクリプトだけでは既存ボリュームに対応できないため、明示的な初期化コマンドを使います（[公式イメージの初期化仕様](https://hub.docker.com/_/postgres)）。ボリュームの削除は不要です。
+
+## 既存環境の移行
+
+1. DBのバックアップを取得し、設定を `applications` 形式に変更する。
+2. ZITADELのリダイレクトURIと、アプリのプロキシ・内部API接続先を更新する。
+3. `migrate` を実行して `sessions.app_id` を追加する。
+4. gatewayとアプリを更新して起動し、再ログインする。
+
+既存行は削除もアプリへの自動割り当てもしません。`app_id` がない旧セッションは新しい認証処理では受け付けないため、再ログインが必要です。旧Cookie `session_id` と旧Redisキーは新しい処理では使用しません。ZITADELのユーザー・各アプリの業務データは移行対象ではありません。
+
+現在の設定例はReactのみを登録しています。TanStackの現行コードは独自パスワード認証であり、gatewayへの移行は別途必要です。
+
+## 検証
+
+```sh
+go test ./...
+go vet ./...
+go build ./...
+docker compose config --quiet
+```
+
+PostgreSQL・Redis統合テストには既存環境から分離した検証用インスタンスを使います。PostgreSQLは `postgres` ユーザー、パスワード `test-only` とし、`GATEWAY_TEST_DB_PORT` と `GATEWAY_TEST_REDIS_PORT` にlocalhostの公開ポートを設定して `go test ./...` を実行します。テストは検証用PostgreSQL内に一意なDBを作成します。変数未指定時は統合テストをスキップします。
+
+この手順はComposeとローカル開発向けです。既存の `kube/` マニフェストには新しい設定形式をまだ反映していません。Kubernetesへ適用する前に、設定とプロキシを更新する必要があります。

@@ -2,9 +2,7 @@ package service
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/google/uuid"
@@ -68,32 +66,11 @@ func (s *AuthService) HandleCallback(w http.ResponseWriter, r *http.Request, ses
 }
 
 func (s *AuthService) HandleLogout(w http.ResponseWriter, r *http.Request, sessionID string, redirect string) (bool, error) {
-	hasRedirect := redirect != ""
-	redirect = SafeRedirect(redirect, LogoutRedirectFallback)
-	s.logger.Debug("logout start",
-		zap.Bool("has_redirect", hasRedirect),
-	)
-	sess, err := s.sessionSrv.Get(sessionID)
-	if err != nil {
-		_ = s.sessionSrv.Delete(sessionID)
-		s.logger.Debug("logout session not found")
-		return false, nil
-	}
-	postIdpLogoutURL := fmt.Sprintf("%s/%s", s.cfg.AppHost, "/auth/logout?redirect="+url.QueryEscape(redirect))
-	state := uuid.NewString()
-	ok, err := s.idp.Logout(w, r, sess, state, postIdpLogoutURL)
-	if err != nil {
+	if err := s.sessionSrv.Delete(sessionID); err != nil {
 		return false, err
 	}
-	err = s.sessionSrv.Delete(sessionID)
-	if err != nil {
-		s.logger.Debug("logout failed to delete session")
-	}
-	s.logger.Debug("logout completed",
-		zap.Bool("idp_redirected", ok),
-	)
-
-	return ok, nil
+	s.logger.Debug("logout completed")
+	return false, nil
 }
 
 func (s *AuthService) GetSession(sessionID string) (model.Session, error) {

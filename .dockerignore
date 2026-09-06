@@ -1,1 +1,4 @@
 .git
+*.pat
+.env
+.env.*
