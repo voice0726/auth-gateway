@@ -33,6 +33,11 @@ Cookie名は `session_<アプリID>`、Domainなし、Path `/`、HttpOnlyです�
 
 ## 設定と起動
 
+通常のローカル運用はComposeを基準とします。
+`kube/` は独立した技術実験用です。
+Kubernetes設定は旧単一アプリ形式のため、そのままではアプリ別セッション版を起動できません。
+今回のアプリ別セッション導入では、Kubernetesの更新・適用を完了条件に含めません。
+
 既定は `config/dev.yaml`、Composeでは `config/compose.yaml` を使用します。`CONFIG_PATH` で変更できます。DB・Redis・ZITADELの接続設定は共有し、`applications` に次を登録します。
 
 - `id`: 小文字英数字・ハイフンの一意なアプリID
