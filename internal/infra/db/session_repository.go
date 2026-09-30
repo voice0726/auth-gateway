@@ -10,20 +10,22 @@ import (
 )
 
 type SessionRepository struct {
-	db *gorm.DB
+	db    *gorm.DB
+	appID string
 }
 
-func NewSessionRepository(db *gorm.DB) *SessionRepository {
-	return &SessionRepository{db: db}
+func NewSessionRepository(db *gorm.DB, appID string) *SessionRepository {
+	return &SessionRepository{db: db, appID: appID}
 }
 
 func (s *SessionRepository) Create(sess model.Session) error {
-	return s.db.Save(&sess).Error
+	sess.AppID = s.appID
+	return s.db.Create(&sess).Error
 }
 
 func (s *SessionRepository) Get(id string) (model.Session, error) {
 	var record model.Session
-	if err := s.db.First(&record, "id = ?", id).Error; err != nil {
+	if err := s.db.First(&record, "id = ? AND app_id = ?", id, s.appID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return model.Session{}, model.ErrSessionNotFound
 		}
@@ -36,5 +38,5 @@ func (s *SessionRepository) Get(id string) (model.Session, error) {
 }
 
 func (s *SessionRepository) Delete(id string) error {
-	return s.db.Delete(&model.Session{}, "id = ?", id).Error
+	return s.db.Delete(&model.Session{}, "id = ? AND app_id = ?", id, s.appID).Error
 }

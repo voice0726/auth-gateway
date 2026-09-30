@@ -68,38 +68,27 @@ func (s *Handler) Callback(c echo.Context) error {
 func (s *Handler) Logout(c echo.Context) error {
 	redirect := c.QueryParam("redirect")
 	s.logger.Debug("logout request received",
-		zap.String("redirect", redirect),
+		zap.Bool("has_redirect", redirect != ""),
 	)
 
 	sessionID, err := s.sessionIDFromRequest(c.Request())
 	if err != nil {
-		s.logger.Debug("logout request missing session",
-			zap.String("error", err.Error()),
-		)
+		s.logger.Debug("logout request missing session")
 		s.clearSessionCookie(c)
 		return c.NoContent(http.StatusNoContent)
 	}
 
 	ok, err := s.service.HandleLogout(c.Response().Writer, c.Request(), sessionID, redirect)
 	if err != nil {
-		s.logger.Debug("logout request failed",
-			zap.String("session_id_prefix", statePrefix(sessionID)),
-			zap.Error(err),
-		)
+		s.logger.Debug("logout request failed")
 		return echo.NewHTTPError(http.StatusInternalServerError, "logout failed")
 	}
 	s.clearSessionCookie(c)
 	if ok {
-		s.logger.Debug("logout request completed",
-			zap.String("session_id_prefix", statePrefix(sessionID)),
-			zap.Bool("idp_redirected", ok),
-		)
+		s.logger.Debug("logout request completed", zap.Bool("idp_redirected", ok))
 		return nil
 	}
-	s.logger.Debug("logout request completed without redirect",
-		zap.String("session_id_prefix", statePrefix(sessionID)),
-		zap.Bool("idp_redirected", ok),
-	)
+	s.logger.Debug("logout request completed without redirect", zap.Bool("idp_redirected", ok))
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -192,11 +181,4 @@ func (s *Handler) clearSessionCookie(c echo.Context) {
 		cookie.Domain = s.cfg.CookieDomain
 	}
 	c.SetCookie(cookie)
-}
-
-func statePrefix(value string) string {
-	if len(value) <= 8 {
-		return value
-	}
-	return value[:8]
 }

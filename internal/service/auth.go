@@ -2,7 +2,6 @@ package service
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -34,15 +33,11 @@ func NewAuthService(cfg config.Config, identityProvider IdentityProvider, sessio
 }
 
 func (s *AuthService) StartLogin(w http.ResponseWriter, r *http.Request, redirect string) error {
-	if redirect == "" {
-		redirect = s.cfg.FrontendPostLogoutURL
-	}
+	hasRedirect := redirect != ""
+	redirect = SafeRedirect(redirect, LoginRedirectFallback)
 	state := uuid.NewString()
 	s.logger.Debug("login start",
-		zap.String("redirect", redirect),
-		zap.String("state_prefix", statePrefix(state)),
-		zap.String("referer", r.Referer()),
-		zap.String("user_agent", r.UserAgent()),
+		zap.Bool("has_redirect", hasRedirect),
 	)
 	if err := s.stateSrv.Set(state, redirect, time.Now().Add(s.cfg.StateTTL)); err != nil {
 		return err
@@ -52,12 +47,7 @@ func (s *AuthService) StartLogin(w http.ResponseWriter, r *http.Request, redirec
 }
 
 func (s *AuthService) HandleCallback(w http.ResponseWriter, r *http.Request, sessionID string) (string, model.Session, error) {
-	s.logger.Debug("callback start",
-		zap.String("state_prefix", statePrefix(r.URL.Query().Get("state"))),
-		zap.String("referer", r.Referer()),
-		zap.String("user_agent", r.UserAgent()),
-		zap.String("raw_query", r.URL.RawQuery),
-	)
+	s.logger.Debug("callback start")
 	sess, state, err := s.idp.Callback(w, r, sessionID)
 	if err != nil {
 		return "", model.Session{}, err
@@ -66,58 +56,23 @@ func (s *AuthService) HandleCallback(w http.ResponseWriter, r *http.Request, ses
 	if err != nil {
 		return "", model.Session{}, err
 	}
+	redirect = SafeRedirect(redirect, LoginRedirectFallback)
 	_ = s.stateSrv.Delete(state)
 	if err := s.sessionSrv.Create(sess); err != nil {
 		return "", model.Session{}, err
 	}
-	s.logger.Debug("callback completed",
-		zap.String("redirect", redirect),
-		zap.String("session_id_prefix", statePrefix(sessionID)),
-	)
+	s.logger.Debug("callback completed")
 	return redirect, sess, nil
 }
 
 func (s *AuthService) HandleLogout(w http.ResponseWriter, r *http.Request, sessionID string, redirect string) (bool, error) {
-	if redirect == "" {
-		redirect = s.cfg.FrontendPostLogoutURL
-	}
-	s.logger.Debug("logout start",
-		zap.String("redirect", redirect),
-		zap.String("session_id_prefix", statePrefix(sessionID)),
-	)
-	sess, err := s.sessionSrv.Get(sessionID)
-	if err != nil {
-		_ = s.sessionSrv.Delete(sessionID)
-		s.logger.Debug("logout session not found",
-			zap.String("session_id_prefix", statePrefix(sessionID)),
-		)
-		return false, nil
-	}
-	postIdpLogoutURL := fmt.Sprintf("%s/%s", s.cfg.AppHost, "/auth/logout?redirect="+redirect)
-	state := uuid.NewString()
-	ok, err := s.idp.Logout(w, r, sess, state, postIdpLogoutURL)
-	if err != nil {
+	if err := s.sessionSrv.Delete(sessionID); err != nil {
 		return false, err
 	}
-	err = s.sessionSrv.Delete(sessionID)
-	if err != nil {
-		s.logger.Debug("logout failed to delete session", zap.Error(err))
-	}
-	s.logger.Debug("logout completed",
-		zap.Bool("idp_redirected", ok),
-		zap.String("state_prefix", statePrefix(state)),
-	)
-
-	return ok, nil
+	s.logger.Debug("logout completed")
+	return false, nil
 }
 
 func (s *AuthService) GetSession(sessionID string) (model.Session, error) {
 	return s.sessionSrv.Get(sessionID)
-}
-
-func statePrefix(value string) string {
-	if len(value) <= 8 {
-		return value
-	}
-	return value[:8]
 }

@@ -1,4 +1,20 @@
 services:
+  migrate:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/migrate"]
+    environment:
+      CONFIG_PATH: /app/config/compose.yaml
+    volumes:
+      - ./config:/app/config:ro
+    networks:
+      - zitadel
+    depends_on:
+      db:
+        condition: service_healthy
+
   gateway:
     restart: unless-stopped
     build:

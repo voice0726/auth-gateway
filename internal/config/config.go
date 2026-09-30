@@ -12,9 +12,10 @@ import (
 )
 
 type Config struct {
-	Env        string
-	ServerAddr string
-	AppHost    string
+	AppID        string
+	Applications []Application
+	Env          string
+	ServerAddr   string
 
 	DBHost     string
 	DBPort     int
@@ -24,19 +25,18 @@ type Config struct {
 	DBSSLMode  string
 	DBTimeZone string
 
-	ZitadelIssuer       string
-	ZitadelClientID     string
-	ZitadelClientSecret string
-	ZitadelRedirectURI  string
-	ZitadelScopes       []string
-	ZitadelPort         int
-	ZitadelInsecure     bool
+	ZitadelIssuer      string
+	ZitadelClientID    string
+	ZitadelRedirectURI string
+	ZitadelScopes      []string
+	ZitadelPort        int
+	ZitadelInsecure    bool
 
 	SessionSecret string
 	SessionTTL    time.Duration
 	StateTTL      time.Duration
 
-	FrontendPostLogoutURL string
+	FrontendOrigin string
 
 	CookieName     string
 	CookieSecure   bool
@@ -57,8 +57,9 @@ type Config struct {
 }
 
 type rawConfig struct {
-	Env        string `yaml:"env"`
-	ServerAddr string `yaml:"server_addr"`
+	Applications []Application `yaml:"applications"`
+	Env          string        `yaml:"env"`
+	ServerAddr   string        `yaml:"server_addr"`
 
 	DBHost     string `yaml:"db_host"`
 	DBPort     int    `yaml:"db_port"`
@@ -68,30 +69,19 @@ type rawConfig struct {
 	DBSSLMode  string `yaml:"db_sslmode"`
 	DBTimeZone string `yaml:"db_timezone"`
 
-	ZitadelIssuer       string   `yaml:"zitadel_issuer"`
-	ZitadelClientID     string   `yaml:"zitadel_client_id"`
-	ZitadelClientSecret string   `yaml:"zitadel_client_secret"`
-	ZitadelRedirectURI  string   `yaml:"zitadel_redirect_uri"`
-	ZitadelScopes       []string `yaml:"zitadel_scopes"`
-	ZitadelPort         int      `yaml:"zitadel_port"`
-	ZitadelInsecure     bool     `yaml:"zitadel_insecure"`
+	ZitadelIssuer   string   `yaml:"zitadel_issuer"`
+	ZitadelScopes   []string `yaml:"zitadel_scopes"`
+	ZitadelPort     int      `yaml:"zitadel_port"`
+	ZitadelInsecure bool     `yaml:"zitadel_insecure"`
 
-	SessionSecret string        `yaml:"session_secret"`
-	SessionTTL    time.Duration `yaml:"session_ttl"`
-	StateTTL      time.Duration `yaml:"state_ttl"`
+	SessionTTL time.Duration `yaml:"session_ttl"`
+	StateTTL   time.Duration `yaml:"state_ttl"`
 
-	FrontendPostLogoutURL string `yaml:"frontend_post_logout_url"`
-	AppHost               string `yaml:"app_host"`
-
-	CookieName     string `yaml:"cookie_name"`
 	CookieSecure   bool   `yaml:"cookie_secure"`
-	CookieDomain   string `yaml:"cookie_domain"`
 	CookieSameSite string `yaml:"cookie_same_site"`
 
 	LogLevel  string `yaml:"log_level"`
 	LogFormat string `yaml:"log_format"`
-
-	InternalToken string `yaml:"internal_token"`
 
 	CORSAllowOrigins []string `yaml:"cors_allow_origins"`
 
@@ -113,44 +103,38 @@ func Load() (Config, error) {
 	}
 
 	var raw rawConfig
-	if err := yaml.Unmarshal(data, &raw); err != nil {
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&raw); err != nil {
 		return Config{}, err
 	}
 
 	cfg := Config{
-		Env:                   raw.Env,
-		ServerAddr:            raw.ServerAddr,
-		DBHost:                raw.DBHost,
-		DBPort:                raw.DBPort,
-		DBUser:                raw.DBUser,
-		DBPassword:            raw.DBPassword,
-		DBName:                raw.DBName,
-		DBSSLMode:             raw.DBSSLMode,
-		DBTimeZone:            raw.DBTimeZone,
-		ZitadelIssuer:         raw.ZitadelIssuer,
-		ZitadelClientID:       raw.ZitadelClientID,
-		ZitadelClientSecret:   raw.ZitadelClientSecret,
-		ZitadelRedirectURI:    raw.ZitadelRedirectURI,
-		ZitadelScopes:         normalizeScopes(raw.ZitadelScopes),
-		ZitadelPort:           raw.ZitadelPort,
-		ZitadelInsecure:       raw.ZitadelInsecure,
-		SessionSecret:         raw.SessionSecret,
-		SessionTTL:            raw.SessionTTL,
-		StateTTL:              raw.StateTTL,
-		FrontendPostLogoutURL: raw.FrontendPostLogoutURL,
-		AppHost:               raw.AppHost,
-		CookieName:            raw.CookieName,
-		CookieSecure:          raw.CookieSecure,
-		CookieDomain:          raw.CookieDomain,
-		CookieSameSite:        parseSameSite(raw.CookieSameSite),
-		LogLevel:              raw.LogLevel,
-		LogFormat:             raw.LogFormat,
-		InternalToken:         raw.InternalToken,
-		CORSAllowOrigins:      raw.CORSAllowOrigins,
-		RedisAddr:             raw.RedisAddr,
-		RedisPassword:         raw.RedisPassword,
-		RedisDB:               raw.RedisDB,
-		RedisPrefix:           raw.RedisPrefix,
+		Applications:     raw.Applications,
+		Env:              raw.Env,
+		ServerAddr:       raw.ServerAddr,
+		DBHost:           raw.DBHost,
+		DBPort:           raw.DBPort,
+		DBUser:           raw.DBUser,
+		DBPassword:       raw.DBPassword,
+		DBName:           raw.DBName,
+		DBSSLMode:        raw.DBSSLMode,
+		DBTimeZone:       raw.DBTimeZone,
+		ZitadelIssuer:    raw.ZitadelIssuer,
+		ZitadelScopes:    normalizeScopes(raw.ZitadelScopes),
+		ZitadelPort:      raw.ZitadelPort,
+		ZitadelInsecure:  raw.ZitadelInsecure,
+		SessionTTL:       raw.SessionTTL,
+		StateTTL:         raw.StateTTL,
+		CookieSecure:     raw.CookieSecure,
+		CookieSameSite:   parseSameSite(raw.CookieSameSite),
+		LogLevel:         raw.LogLevel,
+		LogFormat:        raw.LogFormat,
+		CORSAllowOrigins: raw.CORSAllowOrigins,
+		RedisAddr:        raw.RedisAddr,
+		RedisPassword:    raw.RedisPassword,
+		RedisDB:          raw.RedisDB,
+		RedisPrefix:      raw.RedisPrefix,
 	}
 
 	if cfg.ZitadelPort == 0 {
@@ -161,7 +145,7 @@ func Load() (Config, error) {
 		}
 	}
 
-	if err := validate(cfg); err != nil {
+	if err := validateApplications(cfg); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
@@ -199,8 +183,8 @@ func validate(cfg Config) error {
 	if cfg.SessionSecret == "" {
 		missing = append(missing, "session_secret")
 	}
-	if cfg.FrontendPostLogoutURL == "" {
-		missing = append(missing, "frontend_post_logout_url")
+	if cfg.FrontendOrigin == "" {
+		return errors.New("frontend_origin is required")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required config fields: %s", strings.Join(missing, ", "))

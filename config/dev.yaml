@@ -1,6 +1,5 @@
 env: dev
 server_addr: ":8800"
-app_host: "http://app.localtest.me"
 
 db_host: "localhost"
 db_port: 15432
@@ -11,9 +10,6 @@ db_sslmode: "disable"
 db_timezone: "Asia/Tokyo"
 
 zitadel_issuer: "auth.localtest.me"
-zitadel_client_id: "354500420372004868"
-zitadel_client_secret: ""
-zitadel_redirect_uri: "http://auth.localtest.me/auth/callback"
 zitadel_scopes:
   - openid
   - profile
@@ -21,24 +17,26 @@ zitadel_scopes:
 zitadel_port: 8080
 zitadel_insecure: true
 
-session_secret: "0123456789abcdef0123456789abcdef"
 session_ttl: 24h
 state_ttl: 10m
-frontend_post_logout_url: "http://auth.localtest.me/logout"
 
-cookie_name: "session_id"
 cookie_secure: false
-cookie_domain: "localtest.me"
 cookie_same_site: "Lax"
 
 log_level: "debug"
 log_format: "pretty"
-internal_token: "replace-with-internal-token"
 
 cors_allow_origins:
-  - "http://app.localtest.me"
+  - "http://react.localtest.me:5174"
 
 redis_addr: "localhost:16379"
 redis_password: ""
 redis_db: 0
 redis_prefix: "auth-gateway"
+
+applications:
+  - id: react-app-playground
+    origin: "http://react.localtest.me:5174"
+    client_id: "389568185071894793"
+    session_secret: "0123456789abcdef0123456789abcdef"
+    internal_token: "replace-with-react-internal-token"

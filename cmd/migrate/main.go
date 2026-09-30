@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"time"
+
 	"go.uber.org/zap"
 
 	"github.com/voice0726/auth-gateway/internal/config"
@@ -17,6 +20,11 @@ func main() {
 	log, err := logger.New(cfg)
 	if err != nil {
 		panic(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := db.EnsureDatabase(ctx, cfg); err != nil {
+		log.Fatal("database creation failed", zap.Error(err))
 	}
 	gormDB, err := db.NewConn(cfg, log)
 	if err != nil {
