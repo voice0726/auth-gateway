@@ -56,6 +56,7 @@ func NewEcho(cfg config.Config, logger *zap.Logger) *echo.Echo {
 }
 
 func RegisterRoutes(e *echo.Echo, cfg config.Config, database *gorm.DB, cache *redis.Client, logger *zap.Logger) error {
+	apps := make([]appRoutes, 0, len(cfg.Applications))
 	for _, app := range cfg.Applications {
 		appCfg := cfg.ForApplication(app)
 		idp, err := zitadel.NewClient(appCfg)
@@ -69,18 +70,71 @@ func RegisterRoutes(e *echo.Echo, cfg config.Config, database *gorm.DB, cache *r
 		if err != nil {
 			return err
 		}
-		registerApplicationRoutes(e, appCfg, handler)
+		apps = append(apps, newAppRoutes(appCfg, handler))
 	}
+	registerRoutes(e, apps)
 	return nil
 }
 
-func registerApplicationRoutes(e *echo.Echo, cfg config.Config, handler *authhandler.Handler) {
-	group := e.Group("/auth/" + cfg.AppID)
-	group.GET("/login", handler.Login)
-	group.GET("/callback", handler.Callback)
-	group.POST("/logout", handler.Logout, logoutOrigin(cfg))
-	group.GET("/me", handler.Me, sessionOrigin(cfg))
-	e.GET("/internal/"+cfg.AppID+"/session", handler.InternalSession, internalAuth(cfg))
+// appIDHeader は、リバースプロキシが固定値で付けるアプリ識別ヘッダ。認証情報ではない。
+const appIDHeader = "X-App-Id"
+
+// appRoutes は、1アプリ分のハンドラ。Origin検証など設定依存のガードは構築時に組み込む。
+type appRoutes struct {
+	id, internalToken string
+	login, callback   echo.HandlerFunc
+	logout, me        echo.HandlerFunc
+	internalSession   echo.HandlerFunc
+}
+
+func newAppRoutes(cfg config.Config, handler *authhandler.Handler) appRoutes {
+	return appRoutes{
+		id:              cfg.AppID,
+		internalToken:   cfg.InternalToken,
+		login:           handler.Login,
+		callback:        handler.Callback,
+		logout:          logoutOrigin(cfg)(handler.Logout),
+		me:              sessionOrigin(cfg)(handler.Me),
+		internalSession: handler.InternalSession,
+	}
+}
+
+// registerRoutes は、アプリを共通パスに登録する。
+// /auth/* は X-App-Id、/internal/session は X-Internal-Token でアプリを特定する。
+func registerRoutes(e *echo.Echo, apps []appRoutes) {
+	byID := make(map[string]appRoutes, len(apps))
+	for _, app := range apps {
+		byID[app.id] = app
+	}
+	byHeader := func(pick func(appRoutes) echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			app, ok := byID[c.Request().Header.Get(appIDHeader)]
+			if !ok {
+				return echo.NewHTTPError(http.StatusBadRequest, "unknown application")
+			}
+			return pick(app)(c)
+		}
+	}
+	auth := e.Group("/auth", noStore)
+	auth.GET("/login", byHeader(func(a appRoutes) echo.HandlerFunc { return a.login }))
+	auth.GET("/callback", byHeader(func(a appRoutes) echo.HandlerFunc { return a.callback }))
+	auth.POST("/logout", byHeader(func(a appRoutes) echo.HandlerFunc { return a.logout }))
+	auth.GET("/me", byHeader(func(a appRoutes) echo.HandlerFunc { return a.me }))
+	internal := e.Group("/internal", noStore)
+	internal.GET("/session", func(c echo.Context) error {
+		app, ok := appByInternalToken(apps, c.Request().Header.Get("X-Internal-Token"))
+		if !ok {
+			return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
+		}
+		return app.internalSession(c)
+	})
+}
+
+func noStore(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
+		return next(c)
+	}
 }
 
 func sessionOrigin(cfg config.Config) echo.MiddlewareFunc {

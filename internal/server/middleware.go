@@ -1,21 +1,16 @@
 package server
 
-import (
-	"net/http"
+import "crypto/subtle"
 
-	"github.com/labstack/echo/v4"
-
-	"github.com/voice0726/auth-gateway/internal/config"
-)
-
-func internalAuth(cfg config.Config) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			token := c.Request().Header.Get("X-Internal-Token")
-			if token == "" || token != cfg.InternalToken {
-				return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-			}
-			return next(c)
+// appByInternalToken は、内部トークンに一致するアプリを返す。
+// 一致するまで打ち切らず全アプリと比較する。
+func appByInternalToken(apps []appRoutes, token string) (appRoutes, bool) {
+	var found appRoutes
+	matched := 0
+	for _, app := range apps {
+		if app.internalToken != "" && subtle.ConstantTimeCompare([]byte(token), []byte(app.internalToken)) == 1 {
+			found, matched = app, 1
 		}
 	}
+	return found, matched == 1
 }
