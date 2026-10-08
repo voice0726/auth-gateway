@@ -30,7 +30,7 @@ func main() {
 	if err != nil {
 		log.Fatal("db init failed", zap.Error(err))
 	}
-	if err := gormDB.AutoMigrate(&model.Session{}); err != nil {
+	if err := gormDB.AutoMigrate(&model.Session{}, &model.LoginState{}); err != nil {
 		log.Fatal("migration failed", zap.Error(err))
 	}
 }

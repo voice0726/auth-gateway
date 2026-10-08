@@ -52,12 +52,11 @@ func (s *AuthService) HandleCallback(w http.ResponseWriter, r *http.Request, ses
 	if err != nil {
 		return "", model.Session{}, err
 	}
-	redirect, err := s.stateSrv.Get(state)
+	redirect, err := s.stateSrv.Consume(state)
 	if err != nil {
 		return "", model.Session{}, err
 	}
 	redirect = SafeRedirect(redirect, s.defaultRedirect())
-	_ = s.stateSrv.Delete(state)
 	if err := s.sessionSrv.Create(sess); err != nil {
 		return "", model.Session{}, err
 	}

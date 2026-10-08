@@ -50,11 +50,6 @@ type Config struct {
 	InternalToken string
 
 	CORSAllowOrigins []string
-
-	RedisAddr     string
-	RedisPassword string
-	RedisDB       int
-	RedisPrefix   string
 }
 
 type rawConfig struct {
@@ -85,11 +80,6 @@ type rawConfig struct {
 	LogFormat string `yaml:"log_format"`
 
 	CORSAllowOrigins []string `yaml:"cors_allow_origins"`
-
-	RedisAddr     string `yaml:"redis_addr"`
-	RedisPassword string `yaml:"redis_password"`
-	RedisDB       int    `yaml:"redis_db"`
-	RedisPrefix   string `yaml:"redis_prefix"`
 }
 
 func Load() (Config, error) {
@@ -132,10 +122,6 @@ func Load() (Config, error) {
 		LogLevel:         raw.LogLevel,
 		LogFormat:        raw.LogFormat,
 		CORSAllowOrigins: raw.CORSAllowOrigins,
-		RedisAddr:        raw.RedisAddr,
-		RedisPassword:    raw.RedisPassword,
-		RedisDB:          raw.RedisDB,
-		RedisPrefix:      raw.RedisPrefix,
 	}
 
 	if cfg.ZitadelPort == 0 {
@@ -228,12 +214,6 @@ func validate(cfg Config) error {
 	}
 	if cfg.InternalToken == "" {
 		return errors.New("internal_token is required")
-	}
-	if cfg.RedisAddr == "" {
-		return errors.New("redis_addr is required")
-	}
-	if cfg.RedisPrefix == "" {
-		return errors.New("redis_prefix is required")
 	}
 	if cfg.SessionTTL == 0 {
 		return errors.New("session_ttl is required")
