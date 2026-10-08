@@ -15,21 +15,23 @@ ZITADELの本人確認を使い、アプリごとに独立したCookieセッシ�
 
 ## 接続契約
 
-ブラウザはアプリと同じオリジンの `/auth/*` を使います。アプリのリバースプロキシは、固定されたアプリIDを付けてgatewayへ転送します。Reactの例：
+ブラウザはアプリと同じオリジンの `/auth/*` を使います。アプリのリバースプロキシは、パスを変えずに固定の `X-App-Id` ヘッダを付けてgatewayへ転送します。Reactの例：
 
-| 呼び出し元 | 公開パス | gatewayのパス |
+| 呼び出し元 | 公開パス | gatewayへの転送 |
 | --- | --- | --- |
-| ブラウザ | `GET /auth/login?redirect=/dashboard` | `GET /auth/react-app-playground/login`（クエリを維持） |
-| ZITADELからの復帰 | `GET /auth/callback` | `GET /auth/react-app-playground/callback` |
-| ブラウザ | `GET /auth/me` | `GET /auth/react-app-playground/me` |
-| ブラウザ | `POST /auth/logout` | `POST /auth/react-app-playground/logout` |
-| Reactバックエンド | 公開しない | `GET /internal/react-app-playground/session` |
+| ブラウザ | `GET /auth/login?redirect=/dashboard` | 同じパス（クエリを維持）＋ `X-App-Id: react-app-playground` |
+| ZITADELからの復帰 | `GET /auth/callback` | 同上 |
+| ブラウザ | `GET /auth/me` | 同上 |
+| ブラウザ | `POST /auth/logout` | 同上 |
+| Reactバックエンド | 公開しない | `GET /internal/session` ＋ `X-Internal-Token` |
 
-内部APIはアプリ専用の `X-Internal-Token` と転送されたCookieを要求します。アプリIDは認証情報ではありません。プロキシでは固定のアプリIDを使い、`/internal/*` をブラウザへ公開しないでください。
+`X-App-Id` が無い、または未登録のときは400です。プロキシはクライアントが送った `X-App-Id` を上書きしてください。ヘッダはアプリの判別だけに使い、認証情報ではありません。
+
+内部APIはアプリ専用の `X-Internal-Token` と転送されたCookieを要求します。トークンからアプリを特定するため、`X-App-Id` は使いません。`/internal/*` をブラウザへ公開しないでください。`/auth/*` と `/internal/*` の応答には `Cache-Control: no-store` を付けます。
 
 Cookie名は `session_<アプリID>`、Domainなし、Path `/`、HttpOnlyです。アプリごとに暗号鍵を分け、別アプリのCookieを名前だけ変更しても使用できないようにします。OIDCライブラリの一時Cookieも分離するため、アプリには異なるホスト名が必要です。`localhost` のポート違いだけでは分離しません。
 
-ログイン後の遷移先は同一オリジンの相対パスに限定します。POSTログアウトは対象アプリのOriginを検証します。旧 `/auth/me`、`/internal/session` などアプリIDを持たないgatewayのパスは提供しません。
+ログイン後の遷移先は同一オリジンの相対パスに限定します。POSTログアウトは対象アプリのOriginを検証します。旧 `/auth/<アプリID>/*`、`/internal/<アプリID>/session` のパスは提供しません。
 
 ## 設定と起動
 
@@ -45,10 +47,13 @@ Kubernetes設定は旧単一アプリ形式のため、そのままではアプ�
 - `client_id`: ZITADELで登録したアプリ専用のOIDCクライアントID
 - `session_secret`: アプリ専用の16/24/32バイトAES鍵
 - `internal_token`: アプリ専用の内部API認証情報
+- `default_redirect`（省略可）: 戻り先が未指定または不正なときの遷移先。同一オリジンの相対パスのみ。既定は `/dashboard`
+
+`cors_allow_origins` は、ブラウザがgatewayへ直接アクセスする開発構成でだけ設定します。本番はアプリと同一オリジンのプロキシ経由なので空にします（空ならCORSは無効）。
 
 設定例の鍵とトークンは開発用の固定値です。実環境ではアプリごとに別の値を用意し、各バックエンドと一致させます。旧単一アプリ形式の設定は受け付けません。
 
-Reactの開発URLは `http://react.localtest.me:5174`。ZITADELの対象OIDCクライアントにリダイレクトURI `http://react.localtest.me:5174/auth/callback` を登録します。gatewayのポートは `8800`、Reactバックエンドは `18080` です。Viteのプロキシ設定は本番ビルドには含まれないため、本番にも同じパス変換を持つリバースプロキシが必要です。
+Reactの開発URLは `http://react.localtest.me:5174`。ZITADELの対象OIDCクライアントにリダイレクトURI `http://react.localtest.me:5174/auth/callback` を登録します。gatewayのポートは `8800`、Reactバックエンドは `18080` です。Viteのプロキシ設定は本番ビルドには含まれないため、本番にも同じ `X-App-Id` 付与を行うリバースプロキシが必要です。
 
 ```sh
 docker compose up -d db redis

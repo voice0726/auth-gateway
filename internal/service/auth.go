@@ -34,7 +34,7 @@ func NewAuthService(cfg config.Config, identityProvider IdentityProvider, sessio
 
 func (s *AuthService) StartLogin(w http.ResponseWriter, r *http.Request, redirect string) error {
 	hasRedirect := redirect != ""
-	redirect = SafeRedirect(redirect, LoginRedirectFallback)
+	redirect = SafeRedirect(redirect, s.defaultRedirect())
 	state := uuid.NewString()
 	s.logger.Debug("login start",
 		zap.Bool("has_redirect", hasRedirect),
@@ -56,7 +56,7 @@ func (s *AuthService) HandleCallback(w http.ResponseWriter, r *http.Request, ses
 	if err != nil {
 		return "", model.Session{}, err
 	}
-	redirect = SafeRedirect(redirect, LoginRedirectFallback)
+	redirect = SafeRedirect(redirect, s.defaultRedirect())
 	_ = s.stateSrv.Delete(state)
 	if err := s.sessionSrv.Create(sess); err != nil {
 		return "", model.Session{}, err
@@ -75,4 +75,11 @@ func (s *AuthService) HandleLogout(w http.ResponseWriter, r *http.Request, sessi
 
 func (s *AuthService) GetSession(sessionID string) (model.Session, error) {
 	return s.sessionSrv.Get(sessionID)
+}
+
+func (s *AuthService) defaultRedirect() string {
+	if s.cfg.DefaultRedirect != "" {
+		return s.cfg.DefaultRedirect
+	}
+	return LoginRedirectFallback
 }

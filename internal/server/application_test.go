@@ -44,6 +44,7 @@ func TestApplicationSessionAndLogoutIsolation(t *testing.T) {
 	}
 	stores := []*appSessions{}
 	cookies := []*http.Cookie{}
+	apps := []appRoutes{}
 	for _, cfg := range configs {
 		id := cfg.AppID + "-session"
 		store := &appSessions{records: map[string]model.Session{id: {ID: id, UserID: "same-user", ExpiresAt: time.Now().Add(time.Hour)}}}
@@ -54,14 +55,15 @@ func TestApplicationSessionAndLogoutIsolation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		registerApplicationRoutes(e, cfg, handler)
+		apps = append(apps, newAppRoutes(cfg, handler))
 		value, err := crypto.EncryptAES(id, cfg.SessionSecret)
 		if err != nil {
 			t.Fatal(err)
 		}
 		cookies = append(cookies, &http.Cookie{Name: cfg.CookieName, Value: value})
 	}
-	request := func(method, path, origin, token string, cookie *http.Cookie) *httptest.ResponseRecorder {
+	registerRoutes(e, apps)
+	request := func(method, path, appID, origin, token string, cookie *http.Cookie) *httptest.ResponseRecorder {
 		t.Helper()
 		r := httptest.NewRequest(method, path, nil)
 		if cookie != nil {
@@ -69,36 +71,53 @@ func TestApplicationSessionAndLogoutIsolation(t *testing.T) {
 		}
 		r.Header.Set("Origin", origin)
 		r.Header.Set("X-Internal-Token", token)
+		if appID != "" {
+			r.Header.Set("X-App-Id", appID)
+		}
 		w := httptest.NewRecorder()
 		e.ServeHTTP(w, r)
 		return w
 	}
 	for i, cfg := range configs {
-		if w := request("GET", "/auth/"+cfg.AppID+"/me", "", "", cookies[i]); w.Code != 200 {
+		w := request("GET", "/auth/me", cfg.AppID, "", "", cookies[i])
+		if w.Code != 200 {
 			t.Fatalf("own session: %d", w.Code)
 		}
-		if w := request("GET", "/internal/"+cfg.AppID+"/session", "", cfg.InternalToken, cookies[i]); w.Code != 200 {
+		if w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("auth response must not be cacheable: %q", w.Header().Get("Cache-Control"))
+		}
+		w = request("GET", "/internal/session", "", "", cfg.InternalToken, cookies[i])
+		if w.Code != 200 || w.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("own internal session: %d", w.Code)
 		}
 		other := 1 - i
-		if w := request("GET", "/internal/"+cfg.AppID+"/session", "", configs[other].InternalToken, cookies[i]); w.Code != 401 {
+		// 他アプリのトークンはそのアプリの設定で検証され、このアプリの Cookie は復号できない。
+		if w := request("GET", "/internal/session", "", "", configs[other].InternalToken, cookies[i]); w.Code != 401 {
 			t.Fatalf("foreign backend token: %d", w.Code)
 		}
+		// X-App-Id は内部APIの認証に使わない。
+		if w := request("GET", "/internal/session", cfg.AppID, "", "", cookies[i]); w.Code != 401 {
+			t.Fatalf("internal session without token: %d", w.Code)
+		}
 		forged := &http.Cookie{Name: cfg.CookieName, Value: cookies[other].Value}
-		if w := request("GET", "/auth/"+cfg.AppID+"/me", "", "", forged); w.Code != 401 {
+		if w := request("GET", "/auth/me", cfg.AppID, "", "", forged); w.Code != 401 {
 			t.Fatalf("renamed foreign cookie: %d", w.Code)
 		}
-		if w := request("POST", "/auth/"+cfg.AppID+"/logout", configs[other].FrontendOrigin, "", cookies[i]); w.Code != 403 {
+		if w := request("POST", "/auth/logout", cfg.AppID, configs[other].FrontendOrigin, "", cookies[i]); w.Code != 403 {
 			t.Fatalf("foreign logout origin: %d", w.Code)
+		}
+		// 他アプリの識別子を名乗っても、そのアプリの Cookie 名・鍵が必要。
+		if w := request("GET", "/auth/me", configs[other].AppID, "", "", cookies[i]); w.Code != 401 {
+			t.Fatalf("cookie used under another application id: %d", w.Code)
 		}
 	}
 	stores[0].failDelete = true
-	w := request("POST", "/auth/react/logout", configs[0].FrontendOrigin, "", cookies[0])
+	w := request("POST", "/auth/logout", "react", configs[0].FrontendOrigin, "", cookies[0])
 	if w.Code != 500 || len(w.Result().Cookies()) != 0 {
 		t.Fatal("failed deletion must not report successful logout or clear cookie")
 	}
 	stores[0].failDelete = false
-	w = request("POST", "/auth/react/logout", configs[0].FrontendOrigin, "", cookies[0])
+	w = request("POST", "/auth/logout", "react", configs[0].FrontendOrigin, "", cookies[0])
 	if w.Code != 204 {
 		t.Fatalf("logout: %d", w.Code)
 	}
@@ -106,15 +125,32 @@ func TestApplicationSessionAndLogoutIsolation(t *testing.T) {
 	if len(cleared) != 1 || cleared[0].Name != configs[0].CookieName || cleared[0].MaxAge != -1 || cleared[0].Domain != "" {
 		t.Fatalf("logout cookie: %#v", cleared)
 	}
-	if w := request("GET", "/auth/react/me", "", "", cookies[0]); w.Code != 401 {
+	if w := request("GET", "/auth/me", "react", "", "", cookies[0]); w.Code != 401 {
 		t.Fatalf("logged out session: %d", w.Code)
 	}
-	if w := request("GET", "/auth/tanstack/me", "", "", cookies[1]); w.Code != 200 {
+	if w := request("GET", "/auth/me", "tanstack", "", "", cookies[1]); w.Code != 200 {
 		t.Fatalf("other app must remain logged in: %d", w.Code)
 	}
-	for _, path := range []string{"/auth/me", "/internal/session", "/auth/unknown/me"} {
-		if w := request("GET", path, "", "", cookies[1]); w.Code != 404 {
-			t.Fatalf("unscoped or unknown app: %s %d", path, w.Code)
+	for _, appID := range []string{"", "unknown", "REACT", "react,tanstack"} {
+		if w := request("GET", "/auth/me", appID, "", "", cookies[1]); w.Code != 400 {
+			t.Fatalf("missing or unknown application id %q: %d", appID, w.Code)
+		}
+	}
+	for _, path := range []string{"/auth/react/me", "/internal/react/session"} {
+		if w := request("GET", path, "react", "", configs[0].InternalToken, cookies[1]); w.Code != 404 {
+			t.Fatalf("path-scoped API must not exist: %s %d", path, w.Code)
+		}
+	}
+}
+
+func TestInternalTokenLookup(t *testing.T) {
+	apps := []appRoutes{{id: "a", internalToken: "token-a"}, {id: "b", internalToken: "token-b"}, {id: "unset"}}
+	if app, ok := appByInternalToken(apps, "token-b"); !ok || app.id != "b" {
+		t.Fatalf("got %q %v", app.id, ok)
+	}
+	for _, token := range []string{"", "token", "token-a ", "TOKEN-A"} {
+		if _, ok := appByInternalToken(apps, token); ok {
+			t.Fatalf("token %q accepted", token)
 		}
 	}
 }

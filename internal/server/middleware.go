@@ -1,21 +1,22 @@
 package server
 
 import (
-	"net/http"
-
-	"github.com/labstack/echo/v4"
-
-	"github.com/voice0726/auth-gateway/internal/config"
+	"crypto/sha256"
+	"crypto/subtle"
 )
 
-func internalAuth(cfg config.Config) echo.MiddlewareFunc {
-	return func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			token := c.Request().Header.Get("X-Internal-Token")
-			if token == "" || token != cfg.InternalToken {
-				return echo.NewHTTPError(http.StatusUnauthorized, "unauthorized")
-			}
-			return next(c)
+// appByInternalToken は、内部トークンに一致するアプリを返す。
+// 長さの違いが比較時間に出ないよう、固定長のダイジェストで比較する。
+// 一致するまで打ち切らず全アプリと比較する。
+func appByInternalToken(apps []appRoutes, token string) (appRoutes, bool) {
+	got := sha256.Sum256([]byte(token))
+	var found appRoutes
+	matched := 0
+	for _, app := range apps {
+		want := sha256.Sum256([]byte(app.internalToken))
+		if app.internalToken != "" && subtle.ConstantTimeCompare(got[:], want[:]) == 1 {
+			found, matched = app, 1
 		}
 	}
+	return found, matched == 1
 }

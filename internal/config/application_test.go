@@ -36,6 +36,11 @@ func TestApplicationConfigurationIsolation(t *testing.T) {
 		{"shared cookie key", func(v *Application) { v.SessionSecret = first.SessionSecret }},
 		{"shared client", func(v *Application) { v.ClientID = first.ClientID }},
 		{"empty client", func(v *Application) { v.ClientID = "" }},
+		{"external default redirect", func(v *Application) { v.DefaultRedirect = "https://evil.example" }},
+		{"protocol-relative default redirect", func(v *Application) { v.DefaultRedirect = "//evil.example" }},
+		{"backslash default redirect", func(v *Application) { v.DefaultRedirect = "/\\evil.example" }},
+		{"control character default redirect", func(v *Application) { v.DefaultRedirect = "/a\nb" }},
+		{"relative default redirect", func(v *Application) { v.DefaultRedirect = "tickets" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			v := second
@@ -53,5 +58,15 @@ func TestApplicationConfigurationIsolation(t *testing.T) {
 	cfg.Applications = nil
 	if err := validateApplications(cfg); err == nil {
 		t.Fatal("missing applications must fail closed")
+	}
+}
+
+func TestDefaultRedirect(t *testing.T) {
+	cfg := Config{}
+	if got := cfg.ForApplication(Application{}).DefaultRedirect; got != DefaultLoginRedirect {
+		t.Fatalf("omitted default_redirect=%q", got)
+	}
+	if got := cfg.ForApplication(Application{DefaultRedirect: "/tickets"}).DefaultRedirect; got != "/tickets" {
+		t.Fatalf("configured default_redirect=%q", got)
 	}
 }

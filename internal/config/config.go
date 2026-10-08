@@ -36,7 +36,8 @@ type Config struct {
 	SessionTTL    time.Duration
 	StateTTL      time.Duration
 
-	FrontendOrigin string
+	FrontendOrigin  string
+	DefaultRedirect string
 
 	CookieName     string
 	CookieSecure   bool
