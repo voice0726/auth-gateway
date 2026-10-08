@@ -48,7 +48,7 @@ func NewEcho(cfg config.Config, logger *zap.Logger) *echo.Echo {
 		e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
 			AllowOrigins:     cfg.CORSAllowOrigins,
 			AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodOptions},
-			AllowHeaders:     []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization},
+			AllowHeaders:     []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, appIDHeader},
 			AllowCredentials: true,
 		}))
 	}
