@@ -27,8 +27,7 @@ func (logTestIDP) Logout(http.ResponseWriter, *http.Request, model.Session, stri
 type logTestState struct{}
 
 func (logTestState) Set(string, string, time.Time) error { return nil }
-func (logTestState) Get(string) (string, error)          { return "/dashboard", nil }
-func (logTestState) Delete(string) error                 { return nil }
+func (logTestState) Consume(string) (string, error)      { return "/dashboard", nil }
 
 type logTestSession struct{}
 

@@ -10,6 +10,6 @@ var ErrStateExpired = errors.New("stateSrv expired")
 
 type LoginStateService interface {
 	Set(state string, redirectURI string, expiresAt time.Time) error
-	Get(state string) (string, error)
-	Delete(state string) error
+	// Consume は state の戻り先を返し、同時に削除する。
+	Consume(state string) (string, error)
 }

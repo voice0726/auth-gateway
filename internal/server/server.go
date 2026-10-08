@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/voice0726/auth-gateway/internal/infra/db"
-	appRedis "github.com/voice0726/auth-gateway/internal/infra/redis"
 	"github.com/voice0726/auth-gateway/internal/infra/zitadel"
 	"github.com/voice0726/auth-gateway/internal/service"
 	"gorm.io/gorm"
@@ -55,7 +53,7 @@ func NewEcho(cfg config.Config, logger *zap.Logger) *echo.Echo {
 	return e
 }
 
-func RegisterRoutes(e *echo.Echo, cfg config.Config, database *gorm.DB, cache *redis.Client, logger *zap.Logger) error {
+func RegisterRoutes(e *echo.Echo, cfg config.Config, database *gorm.DB, logger *zap.Logger) error {
 	apps := make([]appRoutes, 0, len(cfg.Applications))
 	for _, app := range cfg.Applications {
 		appCfg := cfg.ForApplication(app)
@@ -64,7 +62,7 @@ func RegisterRoutes(e *echo.Echo, cfg config.Config, database *gorm.DB, cache *r
 			return fmt.Errorf("application %s: initialize identity provider: %w", app.ID, err)
 		}
 		sessions := db.NewSessionRepository(database, app.ID)
-		states := appRedis.NewStateStoreWithConfig(cache, appCfg)
+		states := db.NewLoginStateRepository(database, app.ID)
 		authService := service.NewAuthService(appCfg, idp, sessions, states, logger)
 		handler, err := authhandler.NewHandler(appCfg, authService, logger)
 		if err != nil {

@@ -18,8 +18,8 @@ func TestApplicationConfigurationIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, b := cfg.ForApplication(first), cfg.ForApplication(second)
-	if a.CookieName == b.CookieName || a.RedisPrefix == b.RedisPrefix || a.CookieDomain != "" || b.CookieDomain != "" {
-		t.Fatal("cookie and state namespaces must be isolated")
+	if a.CookieName == b.CookieName || a.CookieDomain != "" || b.CookieDomain != "" {
+		t.Fatal("cookie names must be isolated")
 	}
 	if b.ZitadelRedirectURI != second.Origin+"/auth/callback" {
 		t.Fatal("callback must belong to the application origin")

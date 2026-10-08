@@ -15,6 +15,22 @@ services:
       db:
         condition: service_healthy
 
+  cleanup:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/app/cleanup"]
+    environment:
+      CONFIG_PATH: /app/config/compose.yaml
+    volumes:
+      - ./config:/app/config:ro
+    networks:
+      - zitadel
+    depends_on:
+      db:
+        condition: service_healthy
+
   gateway:
     restart: unless-stopped
     build:
@@ -29,8 +45,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      redis:
-        condition: service_started
       zitadel:
         condition: service_healthy
 
@@ -156,14 +170,6 @@ services:
       - "15432:5432"
     volumes:
       - 'data:/var/lib/postgresql/data:rw'
-
-  redis:
-    restart: unless-stopped
-    image: redis:7
-    ports:
-      - "16379:6379"
-    networks:
-      - zitadel
 
 networks:
   zitadel:

@@ -35,7 +35,6 @@ func (c Config) ForApplication(app Application) Config {
 	}
 	c.CookieName = "session_" + app.ID
 	c.CookieDomain = ""
-	c.RedisPrefix += ":" + app.ID
 	return c
 }
 

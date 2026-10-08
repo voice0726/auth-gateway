@@ -1,20 +1,21 @@
 package service
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/voice0726/auth-gateway/internal/config"
+	"github.com/voice0726/auth-gateway/internal/model"
 	"go.uber.org/zap"
 )
 
 type alteredRedirectState struct{ redirect string }
 
 func (s alteredRedirectState) Set(string, string, time.Time) error { return nil }
-func (s alteredRedirectState) Get(string) (string, error)          { return s.redirect, nil }
-func (s alteredRedirectState) Delete(string) error                 { return nil }
+func (s alteredRedirectState) Consume(string) (string, error)      { return s.redirect, nil }
 
 func TestHandleCallbackSanitizesStateStoreRedirect(t *testing.T) {
 	for _, redirect := range []string{"https://evil.example/steal", "//evil.example", "/"} {
@@ -54,5 +55,36 @@ func (s *recordingState) Set(_ string, redirect string, _ time.Time) error {
 	*s.redirect = redirect
 	return nil
 }
-func (s *recordingState) Get(string) (string, error) { return *s.redirect, nil }
-func (s *recordingState) Delete(string) error        { return nil }
+func (s *recordingState) Consume(string) (string, error) { return *s.redirect, nil }
+
+type countingSession struct{ created int }
+
+func (s *countingSession) Create(model.Session) error        { s.created++; return nil }
+func (s *countingSession) Get(string) (model.Session, error) { return model.Session{}, nil }
+func (s *countingSession) Delete(string) error               { return nil }
+
+type failingConsume struct{ err error }
+
+func (s failingConsume) Set(string, string, time.Time) error { return nil }
+func (s failingConsume) Consume(string) (string, error)      { return "", s.err }
+
+func TestHandleCallbackCreatesSessionOnlyAfterStateIsConsumed(t *testing.T) {
+	callback := func() *http.Request {
+		return httptest.NewRequest(http.MethodGet, "/auth/callback?state=oauth-state", nil)
+	}
+	for _, err := range []error{ErrStateNotFound, ErrStateExpired, errors.New("database unavailable")} {
+		sessions := &countingSession{}
+		service := NewAuthService(config.Config{}, logTestIDP{}, sessions, failingConsume{err: err}, zap.NewNop())
+		if _, _, got := service.HandleCallback(httptest.NewRecorder(), callback(), "session-id"); !errors.Is(got, err) {
+			t.Fatalf("error=%v, want %v", got, err)
+		}
+		if sessions.created != 0 {
+			t.Fatalf("session created after state failure %v", err)
+		}
+	}
+	sessions := &countingSession{}
+	service := NewAuthService(config.Config{}, logTestIDP{}, sessions, alteredRedirectState{redirect: "/tickets"}, zap.NewNop())
+	if _, _, err := service.HandleCallback(httptest.NewRecorder(), callback(), "session-id"); err != nil || sessions.created != 1 {
+		t.Fatalf("created=%d err=%v, want one session", sessions.created, err)
+	}
+}

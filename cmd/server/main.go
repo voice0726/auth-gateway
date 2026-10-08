@@ -7,7 +7,6 @@ import (
 
 	"github.com/voice0726/auth-gateway/internal/config"
 	"github.com/voice0726/auth-gateway/internal/infra/db"
-	appRedis "github.com/voice0726/auth-gateway/internal/infra/redis"
 	"github.com/voice0726/auth-gateway/internal/logger"
 	"github.com/voice0726/auth-gateway/internal/server"
 )
@@ -18,7 +17,6 @@ func main() {
 			config.Load,
 			logger.New,
 			db.NewConn,
-			appRedis.NewClient,
 			server.NewEcho,
 		),
 		fx.WithLogger(func(log *zap.Logger) fxevent.Logger {

@@ -29,11 +29,6 @@ log_format: "pretty"
 cors_allow_origins:
   - "http://react.localtest.me:5174"
 
-redis_addr: "localhost:16379"
-redis_password: ""
-redis_db: 0
-redis_prefix: "auth-gateway"
-
 applications:
   - id: react-app-playground
     origin: "http://react.localtest.me:5174"
