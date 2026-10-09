@@ -1,0 +1,49 @@
+#!/bin/bash
+set -euo pipefail
+
+exec > >(tee -a /var/log/auth-gateway-db-startup.log | logger -t auth-gateway-db) 2>&1
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y postgresql curl python3
+
+access_token="$(curl -fsS \
+  -H 'Metadata-Flavor: Google' \
+  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token \
+  | python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])')"
+secret_response="$(curl -fsS \
+  -H "Authorization: Bearer $access_token" \
+  "https://secretmanager.googleapis.com/v1/${secret_name}/versions/latest:access")"
+db_password="$(printf '%s' "$secret_response" | python3 -c 'import base64, json, sys; print(base64.b64decode(json.load(sys.stdin)["payload"]["data"]).decode())')"
+unset access_token secret_response
+
+pg_version="$(find /etc/postgresql -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1)"
+pg_config_dir="/etc/postgresql/$pg_version/main"
+
+cat > "$pg_config_dir/conf.d/auth-gateway.conf" <<EOF
+listen_addresses = '${db_internal_ip},localhost'
+password_encryption = 'scram-sha-256'
+EOF
+
+for pg_hba_rule in \
+  "host auth gateway ${subnet_cidr} scram-sha-256" \
+  "host postgres gateway ${subnet_cidr} scram-sha-256"
+do
+  if ! grep -Fqx "$pg_hba_rule" "$pg_config_dir/pg_hba.conf"; then
+    printf '\n%s\n' "$pg_hba_rule" >> "$pg_config_dir/pg_hba.conf"
+  fi
+done
+
+systemctl enable postgresql
+systemctl restart postgresql
+
+if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'gateway'" | grep -qx 1; then
+  runuser -u postgres -- createuser gateway
+fi
+runuser -u postgres -- psql -v ON_ERROR_STOP=1 \
+  -c "ALTER ROLE gateway WITH LOGIN PASSWORD '$db_password'"
+if ! runuser -u postgres -- psql -tAc "SELECT 1 FROM pg_database WHERE datname = 'auth'" | grep -qx 1; then
+  runuser -u postgres -- createdb --owner=gateway auth
+fi
+
+unset db_password
