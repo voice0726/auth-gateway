@@ -10,6 +10,8 @@ resource "random_password" "db" {
 resource "google_compute_network" "auth" {
   name                    = "auth-gateway"
   auto_create_subnetworks = false
+
+  depends_on = [google_project_service.this["compute.googleapis.com"]]
 }
 
 resource "google_compute_subnetwork" "auth" {
@@ -119,8 +121,13 @@ resource "google_compute_instance" "db" {
 
   deletion_protection = false
 
+  lifecycle {
+    prevent_destroy = true
+  }
+
   depends_on = [
     google_project_service.this,
     google_secret_manager_secret_iam_member.db_password,
+    google_secret_manager_secret_version.db_password,
   ]
 }
