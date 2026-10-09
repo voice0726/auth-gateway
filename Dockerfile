@@ -23,10 +23,6 @@ WORKDIR /app
 COPY --from=builder /out/auth-gateway /app/auth-gateway
 COPY --from=builder /out/migrate /app/migrate
 COPY --from=builder /out/cleanup /app/cleanup
-COPY --from=builder /src/config /app/config
-
-ENV CONFIG_PATH=/app/config/dev.yaml
-
 EXPOSE 8800
 
 USER nonroot:nonroot

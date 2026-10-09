@@ -3,8 +3,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -130,6 +132,13 @@ func Load() (Config, error) {
 		} else {
 			cfg.ZitadelPort = 443
 		}
+	}
+	if port := os.Getenv("PORT"); port != "" {
+		portNumber, err := strconv.Atoi(port)
+		if err != nil || portNumber < 1 || portNumber > 65535 {
+			return Config{}, errors.New("PORT must be a valid TCP port")
+		}
+		cfg.ServerAddr = net.JoinHostPort("", strconv.Itoa(portNumber))
 	}
 
 	if err := validateApplications(cfg); err != nil {

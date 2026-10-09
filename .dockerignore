@@ -1,4 +1,5 @@
 .git
+/config
 *.pat
 .env
 .env.*

@@ -25,6 +25,9 @@ func NewEcho(cfg config.Config, logger *zap.Logger) *echo.Echo {
 	e.HideBanner = true
 	e.HidePort = true
 	e.Use(middleware.Recover())
+	e.GET("/healthz", func(c echo.Context) error {
+		return c.NoContent(http.StatusOK)
+	})
 	e.Use(middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
 		LogMethod:   true,
 		LogURIPath:  true,
