@@ -42,6 +42,8 @@ Kubernetes設定は旧単一アプリ形式のため、そのままではアプ�
 
 既定は `config/dev.yaml`、Composeでは `config/compose.yaml` を使用します。`CONFIG_PATH` で変更できます。DB・ZITADELの接続設定は共有し、`applications` に次を登録します。
 
+Dockerイメージには設定ファイルを含めません。Composeはホストの `config/` を読み取り専用でマウントします。Cloud RunではSecret Managerの設定を `CONFIG_PATH` で指定してください。
+
 - `id`: 小文字英数字・ハイフンの一意なアプリID
 - `origin`: パスなしのアプリURL。ホスト名はアプリごとに分ける
 - `client_id`: ZITADELで登録したアプリ専用のOIDCクライアントID
