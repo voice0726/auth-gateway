@@ -67,7 +67,7 @@ react-app-playground が tickets を取り込むため、新しいアプリ登�
              ├ /api/*   → react バックエンド (Cloud Run)
              └ その他   → 静的アセット
 react バックエンド → gateway /internal/session (X-Internal-Token + 転送 Cookie。アプリはトークンで特定)
-gateway → ZITADEL Cloud (OIDC) / Cloud SQL (auth DB。セッションとログイン state を保存)
+gateway → ZITADEL Cloud (OIDC) / PostgreSQL VM (auth DB。セッションとログイン state を保存)
 ```
 
 README 未決事項の回答案を次に示します。
@@ -99,20 +99,21 @@ README 未決事項の回答案を次に示します。
 
 | 要素 | 案 | 備考 |
 |---|---|---|
-| gateway | Cloud Run(`min-instances=0`) | 公開 ingress(Workers から到達するため)。起動時に ZITADEL の discovery を呼ぶので、コールドスタートに数百 ms 加わる |
+| gateway | Cloud Run(`min-instances=0`, `us-central1`) | 公開 ingress(Workers から到達するため)。起動時に ZITADEL の discovery を呼ぶので、コールドスタートに数百 ms 加わる |
 | 設定とシークレット | Secret Manager の YAML 1 ファイルをボリュームマウントし `CONFIG_PATH` で指す | コード変更なし。DB パスワード・鍵・内部トークンを含む |
-| PostgreSQL | Cloud SQL `db-f1-micro` 級 | 接続は Unix ソケット(`db_host: /cloudsql/<conn>`)。pgx は対応済みで、`db_port` と `db_sslmode: disable` は形式上必要 |
+| PostgreSQL | 検証時は Compute Engine `e2-micro`(Free Tier対象リージョン) | `us-central1` の専用サブネットに配置し、Cloud Run専用サブネットからDirect VPC経由で接続。30 GB標準ディスクを使い、バックアップは作らない |
 | migrate | Cloud Run Job(同一イメージ、entrypoint `/app/migrate`) | デプロイごとに gateway の前に実行 |
 | 起動条件 | 本番 YAML の `server_addr` を Cloud Run のコンテナポートに合わせる | 現行サーバーは `PORT` 環境変数を読まない |
-| 権限 | 実行サービスアカウントに Cloud SQL Client と Secret Manager の読み取り | サービスと migrate Job の両方に Cloud SQL 接続の設定が必要(`/cloudsql/...` を指定するだけではソケットは作られない) |
-| イメージ | Artifact Registry | |
+| 権限 | Cloud Run実行SAは設定Secretを読み取り、DB VMのSAはDBパスワードSecretだけを読み取る | DBはVPC内の5432番に限定。SSHはIAP経由 |
+| イメージ | Artifact Registry(`asia-northeast1`) | 既存リポジトリを維持 |
 
 **費用の目安(いずれも未確認、Tokyo リージョンの確定値は取れていません)**:
 
 - Redis(Memorystore)は廃止するため費用は発生しません。参考として、Memorystore に永続的な無料枠は見つかりませんでした(1GiB Basic で月 US$36 前後、未確認)。
-- Cloud SQL `db-f1-micro` は、近隣リージョンで月 US$10 前後+ストレージです([参考](https://www.bytebase.com/dbcost/cloudsql/instance/db-f1-micro.md))。
+- 検証用DBは `us-central1` の `e2-micro` と標準ディスク30 GBを使い、Free Tier内を想定します。外部IPv4の料金は月約 US$3.65 です。Free Tier対象外の利用や上限超過分は別途課金されます。
+- DBバックアップを作らないため、VMまたはディスクの削除・故障時はDBを作り直します。
 - 接続プールの上限(現行 `NewConn` は未設定)と Cloud Run の最大インスタンス数を合わせて決めます。DB の作成は IaC で行うか migrate に作成権限を与えるかも決めます。
-- 見積もりは GCP の料金計算ツールで asia-northeast1 を選んで確定させます。
+- Cloud RunとDBは同じリージョンに置きます。Artifact Registryは既存の `asia-northeast1` を維持します。
 
 ### 必要なコード変更(フェーズ 2)
 
@@ -132,7 +133,7 @@ Workers が到達するため gateway は公開 ingress になり、`/internal/s
 ## 判断が必要な点
 
 1. **サブドメイン名**(決定済み)。アプリのホストは `react-app-playground.aknr.dev`(アプリ名と同じ)です。gateway の Cloud Run には `auth.aknr.dev` を割り当て、Workers の転送先にします。アプリごとにホストを分ける必要があるため、将来のアプリは別名になります。ブラウザ側もゲートウェイ側も `/auth/*` で、アプリは `X-App-Id` ヘッダで判別します。
-2. **IaC の手段**。推奨は Terraform(`infra/`)で Cloud Run・Cloud SQL・Secret Manager・Artifact Registry を管理することです。代替は `gcloud` の手順書のみです。
+2. **IaC の手段**。推奨は Terraform(`infra/`)で Cloud Run・PostgreSQL VM・Secret Manager・Artifact Registry を管理することです。代替は `gcloud` の手順書のみです。
 3. **GCP プロジェクト**(README 未決事項)。新規の専用プロジェクトを推奨します。既存プロジェクトの有無は私からは分かりません。
 
 ## 実施順
@@ -147,6 +148,6 @@ Workers が到達するため gateway は公開 ingress になり、`/internal/s
 ## 未確認事項
 
 - `go test ./...` はこの環境のサンドボックスで依存取得できず、`internal/config` の通過のみ確認しました。PostgreSQL を使う統合テストは未実行です。
-- Memorystore・Cloud SQL の Tokyo 価格、ZITADEL Free の 100 DAU の定義。
+- 米国リージョン配置による日本からの応答遅延、ZITADEL Free の 100 DAU の定義。
 - `application_test.go` の 2 アプリ分離カバレッジ(フェーズ 1 の項目 4)は、本文を精読していません。
 - kube/ マニフェストは旧形式のままで、本計画の対象外です(README に明記済み)。
