@@ -43,7 +43,7 @@ resource "google_cloud_run_v2_service" "gateway" {
 
       network_interfaces {
         network    = google_compute_network.auth.id
-        subnetwork = google_compute_subnetwork.auth.id
+        subnetwork = google_compute_subnetwork.cloud_run.id
       }
     }
 
@@ -100,7 +100,7 @@ resource "google_cloud_run_v2_job" "task" {
 
         network_interfaces {
           network    = google_compute_network.auth.id
-          subnetwork = google_compute_subnetwork.auth.id
+          subnetwork = google_compute_subnetwork.cloud_run.id
         }
       }
 

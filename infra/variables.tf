@@ -25,6 +25,12 @@ variable "db_subnet_cidr" {
   default = "10.20.0.0/24"
 }
 
+variable "cloud_run_subnet_cidr" {
+  description = "専用Direct VPC egressサブネット。Cloud Runには/26以上の範囲が必要"
+  type        = string
+  default     = "10.21.0.0/26"
+}
+
 variable "github_repository" {
   type    = string
   default = "voice0726/auth-gateway"
@@ -39,7 +45,6 @@ variable "image" {
 variable "deploy_workloads" {
   description = "gateway-config の secret version を登録した後に true にする"
   type        = bool
-  default     = false
 }
 
 variable "db_machine_type" {

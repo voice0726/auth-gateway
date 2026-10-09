@@ -21,12 +21,19 @@ resource "google_compute_subnetwork" "auth" {
   network       = google_compute_network.auth.id
 }
 
+resource "google_compute_subnetwork" "cloud_run" {
+  name          = "auth-gateway-cloud-run"
+  ip_cidr_range = var.cloud_run_subnet_cidr
+  region        = var.region
+  network       = google_compute_network.auth.id
+}
+
 resource "google_compute_firewall" "db" {
   name      = "auth-gateway-db"
   network   = google_compute_network.auth.name
   direction = "INGRESS"
 
-  source_ranges = [var.db_subnet_cidr]
+  source_ranges = [var.cloud_run_subnet_cidr]
   target_tags   = ["auth-gateway-db"]
 
   allow {
@@ -109,9 +116,10 @@ resource "google_compute_instance" "db" {
   }
 
   metadata_startup_script = templatefile("${path.module}/db-startup.sh.tftpl", {
-    db_internal_ip = google_compute_address.db.address
-    subnet_cidr    = var.db_subnet_cidr
-    secret_name    = google_secret_manager_secret.db_password.id
+    db_internal_ip        = google_compute_address.db.address
+    db_subnet_cidr        = var.db_subnet_cidr
+    cloud_run_subnet_cidr = var.cloud_run_subnet_cidr
+    secret_name           = google_secret_manager_secret.db_password.id
   })
 
   service_account {

@@ -101,7 +101,7 @@ README 未決事項の回答案を次に示します。
 |---|---|---|
 | gateway | Cloud Run(`min-instances=0`, `us-central1`) | 公開 ingress(Workers から到達するため)。起動時に ZITADEL の discovery を呼ぶので、コールドスタートに数百 ms 加わる |
 | 設定とシークレット | Secret Manager の YAML 1 ファイルをボリュームマウントし `CONFIG_PATH` で指す | コード変更なし。DB パスワード・鍵・内部トークンを含む |
-| PostgreSQL | 検証時は Compute Engine `e2-micro`(Free Tier対象リージョン) | `us-central1` のVMに配置し、Cloud RunからDirect VPC経由で接続。30 GB標準ディスクを使い、バックアップは作らない |
+| PostgreSQL | 検証時は Compute Engine `e2-micro`(Free Tier対象リージョン) | `us-central1` の専用サブネットに配置し、Cloud Run専用サブネットからDirect VPC経由で接続。30 GB標準ディスクを使い、バックアップは作らない |
 | migrate | Cloud Run Job(同一イメージ、entrypoint `/app/migrate`) | デプロイごとに gateway の前に実行 |
 | 起動条件 | 本番 YAML の `server_addr` を Cloud Run のコンテナポートに合わせる | 現行サーバーは `PORT` 環境変数を読まない |
 | 権限 | Cloud Run実行SAは設定Secretを読み取り、DB VMのSAはDBパスワードSecretだけを読み取る | DBはVPC内の5432番に限定。SSHはIAP経由 |

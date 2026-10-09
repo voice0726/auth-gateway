@@ -25,14 +25,24 @@ listen_addresses = '${db_internal_ip},localhost'
 password_encryption = 'scram-sha-256'
 EOF
 
-for pg_hba_rule in \
-  "host auth gateway ${subnet_cidr} scram-sha-256" \
-  "host postgres gateway ${subnet_cidr} scram-sha-256"
-do
-  if ! grep -Fqx "$pg_hba_rule" "$pg_config_dir/pg_hba.conf"; then
-    printf '\n%s\n' "$pg_hba_rule" >> "$pg_config_dir/pg_hba.conf"
-  fi
-done
+python3 - "$pg_config_dir/pg_hba.conf" "${db_subnet_cidr}" "${cloud_run_subnet_cidr}" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+db_subnet_cidr = sys.argv[2]
+cloud_run_subnet_cidr = sys.argv[3]
+old_rules = {
+    f"host auth gateway {db_subnet_cidr} scram-sha-256",
+    f"host postgres gateway {db_subnet_cidr} scram-sha-256",
+}
+new_rules = [
+    f"host auth gateway {cloud_run_subnet_cidr} scram-sha-256",
+    f"host postgres gateway {cloud_run_subnet_cidr} scram-sha-256",
+]
+lines = [line for line in path.read_text().splitlines() if line not in old_rules | set(new_rules)]
+path.write_text("\n".join([*lines, *new_rules]) + "\n")
+PY
 
 systemctl enable postgresql
 systemctl restart postgresql
