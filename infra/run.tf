@@ -5,10 +5,11 @@ locals {
 resource "google_cloud_run_v2_service" "gateway" {
   count = var.deploy_workloads ? 1 : 0
 
-  name                = "auth-gateway"
-  location            = var.region
-  ingress             = "INGRESS_TRAFFIC_ALL"
-  deletion_protection = true
+  name                 = "auth-gateway"
+  location             = var.region
+  ingress              = "INGRESS_TRAFFIC_ALL"
+  deletion_protection  = true
+  invoker_iam_disabled = true
 
   template {
     service_account = google_service_account.runtime.email
@@ -64,15 +65,6 @@ resource "google_cloud_run_v2_service" "gateway" {
   }
 
   depends_on = [google_secret_manager_secret_iam_member.runtime_config]
-}
-
-resource "google_cloud_run_v2_service_iam_member" "public" {
-  count = var.deploy_workloads ? 1 : 0
-
-  name     = google_cloud_run_v2_service.gateway[0].name
-  location = var.region
-  role     = "roles/run.invoker"
-  member   = "allUsers"
 }
 
 resource "google_cloud_run_v2_job" "task" {
