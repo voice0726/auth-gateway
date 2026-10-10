@@ -7,7 +7,7 @@ require (
 	github.com/jackc/pgtype v1.14.4
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/labstack/echo/v4 v4.15.0
-	github.com/thessem/zap-prettyconsole v0.6.0
+	github.com/thessem/zap-prettyconsole v0.7.0
 	github.com/zitadel/oidc/v3 v3.45.1
 	github.com/zitadel/zitadel-go/v3 v3.21.0
 	go.uber.org/fx v1.24.0
@@ -20,7 +20,6 @@ require (
 )
 
 require (
-	github.com/Code-Hex/dd v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.3 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
