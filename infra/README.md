@@ -24,6 +24,8 @@ GCP プロジェクト `auth-gateway-511100` の基盤を Terraform で管理す
 
    既存のArtifact RegistryがすでにTerraform stateにある場合、importは不要です。GitHub ActionsのWIFは、`main`上の`.github/workflows/deploy.yml`だけを信頼します。
 
+   `.github/workflows/deploy.yml` はPull RequestでPostgreSQL付きのテストを実行します。mainへのpushではテスト成功後にイメージを公開し、migrate Jobを実行してからCloud Runサービスを更新します。
+
 3. DB VM の起動後、本番の設定 YAML に `db_host`、`db_port: 5432`、`db_sslmode: disable`、`db_password` を設定し、Secret Manager に新しいバージョンを登録する。DB ホストとパスワードは `terraform output -raw db_host` と `terraform output -raw db_password` で確認できます。パスワードは VM 起動時に Secret Manager から取得します。
 
    ```sh
@@ -42,7 +44,7 @@ GCP プロジェクト `auth-gateway-511100` の基盤を Terraform で管理す
 
 - `auth.aknr.dev` の割り当てと DNS(Cloudflare)
 - ZITADEL Cloud のテナントとアプリ登録
-- GitHub Actions のワークフロー
+- GitHub Actions のワークフローファイル。認証先のWIF設定とIAM権限はTerraformで管理します。
 
 ## 検証用 DB の制約
 

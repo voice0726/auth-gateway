@@ -1,5 +1,10 @@
 .git
-/config
+.github/
+.dockerignore
+.env*
 *.pat
-.env
-.env.*
+gha-creds-*.json
+config/
+infra/
+kube/
+plans/
