@@ -12,6 +12,8 @@ func TestApplicationConfigurationIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := cfg.Applications[0]
+	first.ProxyToken = "first-proxy-token"
+	cfg.Applications[0] = first
 	second := Application{ID: "tanstack", Origin: "http://tanstack.localtest.me:3000", ClientID: "second-client", SessionSecret: "abcdef0123456789abcdef0123456789", InternalToken: "second-token"}
 	cfg.Applications = append(cfg.Applications, second)
 	if err := validateApplications(cfg); err != nil {
@@ -33,6 +35,10 @@ func TestApplicationConfigurationIsolation(t *testing.T) {
 		{"same host on another port", func(v *Application) { v.Origin = "http://react.localtest.me:3000" }},
 		{"origin path", func(v *Application) { v.Origin = "http://tanstack.localtest.me/app" }},
 		{"shared backend token", func(v *Application) { v.InternalToken = first.InternalToken }},
+		{"shared proxy token", func(v *Application) { v.ProxyToken = first.ProxyToken }},
+		{"proxy token equals own internal token", func(v *Application) { v.ProxyToken = v.InternalToken }},
+		{"proxy token equals another internal token", func(v *Application) { v.ProxyToken = first.InternalToken }},
+		{"internal token equals another proxy token", func(v *Application) { v.InternalToken = first.ProxyToken }},
 		{"shared cookie key", func(v *Application) { v.SessionSecret = first.SessionSecret }},
 		{"shared client", func(v *Application) { v.ClientID = first.ClientID }},
 		{"empty client", func(v *Application) { v.ClientID = "" }},

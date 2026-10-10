@@ -50,6 +50,7 @@ type Config struct {
 	LogFormat string
 
 	InternalToken string
+	ProxyToken    string
 
 	CORSAllowOrigins []string
 }
