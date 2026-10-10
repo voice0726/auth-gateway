@@ -29,6 +29,8 @@ ZITADELの本人確認を使い、アプリごとに独立したCookieセッシ�
 
 内部APIはアプリ専用の `X-Internal-Token` と転送されたCookieを要求します。トークンからアプリを特定するため、`X-App-Id` は使いません。`/internal/*` をブラウザへ公開しないでください。`/auth/*` と `/internal/*` の応答には `Cache-Control: no-store` を付けます。
 
+`GET /auth/login` は、超過すると `429` を返します。既定ではアプリ（`X-App-Id`）ごとに1秒あたり2回、バースト60回までです。リバースプロキシが `X-Internal-Token`（そのアプリのもの）と `X-Client-Ip`（利用者の接続元IP）を付けたときは、アプリ内でIPごとに数えます。トークンが一致しない `X-Client-Ip` は無視します。カウンタはインスタンスごとのメモリ上にあります。
+
 Cookie名は `session_<アプリID>`、Domainなし、Path `/`、HttpOnlyです。アプリごとに暗号鍵を分け、別アプリのCookieを名前だけ変更しても使用できないようにします。OIDCライブラリの一時Cookieも分離するため、アプリには異なるホスト名が必要です。`localhost` のポート違いだけでは分離しません。
 
 ログイン後の遷移先は同一オリジンの相対パスに限定します。POSTログアウトは対象アプリのOriginを検証します。旧 `/auth/<アプリID>/*`、`/internal/<アプリID>/session` のパスは提供しません。

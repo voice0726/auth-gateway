@@ -104,10 +104,8 @@ func newAppRoutes(cfg config.Config, handler *authhandler.Handler) appRoutes {
 // /auth/* は X-App-Id、/internal/session は X-Internal-Token でアプリを特定する。
 func registerRoutes(e *echo.Echo, apps []appRoutes) {
 	byID := make(map[string]appRoutes, len(apps))
-	appIDs := make([]string, 0, len(apps))
 	for _, app := range apps {
 		byID[app.id] = app
-		appIDs = append(appIDs, app.id)
 	}
 	byHeader := func(pick func(appRoutes) echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -119,7 +117,7 @@ func registerRoutes(e *echo.Echo, apps []appRoutes) {
 		}
 	}
 	auth := e.Group("/auth", noStore)
-	auth.GET("/login", byHeader(func(a appRoutes) echo.HandlerFunc { return a.login }), loginRateLimit(appIDs))
+	auth.GET("/login", byHeader(func(a appRoutes) echo.HandlerFunc { return a.login }), loginRateLimit(apps))
 	auth.GET("/callback", byHeader(func(a appRoutes) echo.HandlerFunc { return a.callback }))
 	auth.POST("/logout", byHeader(func(a appRoutes) echo.HandlerFunc { return a.logout }))
 	auth.GET("/me", byHeader(func(a appRoutes) echo.HandlerFunc { return a.me }))
