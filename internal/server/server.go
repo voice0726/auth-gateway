@@ -117,7 +117,7 @@ func registerRoutes(e *echo.Echo, apps []appRoutes) {
 		}
 	}
 	auth := e.Group("/auth", noStore)
-	auth.GET("/login", byHeader(func(a appRoutes) echo.HandlerFunc { return a.login }))
+	auth.GET("/login", byHeader(func(a appRoutes) echo.HandlerFunc { return a.login }), loginRateLimit())
 	auth.GET("/callback", byHeader(func(a appRoutes) echo.HandlerFunc { return a.callback }))
 	auth.POST("/logout", byHeader(func(a appRoutes) echo.HandlerFunc { return a.logout }))
 	auth.GET("/me", byHeader(func(a appRoutes) echo.HandlerFunc { return a.me }))
