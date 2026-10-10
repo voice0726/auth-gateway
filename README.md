@@ -29,7 +29,9 @@ ZITADELの本人確認を使い、アプリごとに独立したCookieセッシ�
 
 内部APIはアプリ専用の `X-Internal-Token` と転送されたCookieを要求します。トークンからアプリを特定するため、`X-App-Id` は使いません。`/internal/*` をブラウザへ公開しないでください。`/auth/*` と `/internal/*` の応答には `Cache-Control: no-store` を付けます。
 
-`GET /auth/login` は、超過すると `429` を返します。既定ではアプリ（`X-App-Id`）ごとに1秒あたり2回、バースト60回までです。リバースプロキシが `X-Proxy-Token`（そのアプリの `proxy_token`）と `X-Client-Ip`（利用者の接続元IP）を付けたときは、アプリ内でIPごとに数えます。トークンが一致しない、または `proxy_token` が未設定のときは、`X-Client-Ip` を無視します。`X-Internal-Token` はこの用途に使えません。カウンタはインスタンスごとのメモリ上にあります。
+`proxy_token` を設定したアプリでは、`GET /auth/login` に一致する `X-Proxy-Token` が必要です。欠落や不一致は、レート制限より前に `403` で拒否します。プロキシはクライアントが送った `X-Proxy-Token` と `X-Client-Ip` を上書きしてください。`X-Internal-Token` はこの用途に使えません。callback では `X-Proxy-Token` を要求しません。
+
+`GET /auth/login` は、レート制限を超過すると `429` を返します。1秒あたり2回、バースト60回までです。正しいトークンと有効な `X-Client-Ip`（利用者の接続元IP）がある場合は、アプリ内でIPごとに数えます。IPが欠落または不正なら、アプリ全体で1バケットを共有します。`proxy_token` 未設定のアプリも、`X-Client-Ip` を無視して1バケットを共有します。未設定アプリの共有は設計上の妥協として維持します。カウンタはインスタンスごとのメモリ上にあります。
 
 Cookie名は `session_<アプリID>`、Domainなし、Path `/`、HttpOnlyです。アプリごとに暗号鍵を分け、別アプリのCookieを名前だけ変更しても使用できないようにします。OIDCライブラリの一時Cookieも分離するため、アプリには異なるホスト名が必要です。`localhost` のポート違いだけでは分離しません。
 
@@ -51,7 +53,7 @@ Dockerイメージには設定ファイルを含めません。Composeはホス�
 - `client_id`: ZITADELで登録したアプリ専用のOIDCクライアントID
 - `session_secret`: アプリ専用の16/24/32バイトAES鍵
 - `internal_token`: アプリ専用の内部API認証情報
-- `proxy_token`（省略可）: アプリのリバースプロキシが `X-Proxy-Token` で示す資格。`/auth/login` のレート制限で `X-Client-Ip` を信用するためだけに使う。`internal_token` や他アプリの値とは別にする
+- `proxy_token`（省略可）: アプリのリバースプロキシが `X-Proxy-Token` で示す資格。設定時は `/auth/login` で一致を必須とする。一致したときだけ `X-Client-Ip` を信用する。`internal_token` や他アプリの値とは別にする
 - `default_redirect`（省略可）: 戻り先が未指定または不正なときの遷移先。同一オリジンの相対パスのみ。既定は `/dashboard`
 
 `cors_allow_origins` は、ブラウザがgatewayへ直接アクセスする開発構成でだけ設定します。本番はアプリと同一オリジンのプロキシ経由なので空にします（空ならCORSは無効）。
