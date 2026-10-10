@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"net"
 	"net/http"
 	"strings"
@@ -18,9 +20,25 @@ const (
 	unknownAppBucket   = "-"
 
 	// clientIPHeader は、アプリのリバースプロキシが利用者の接続元 IP を渡すヘッダ。
-	// X-Internal-Token でアプリが特定できたときだけ信用する。
-	clientIPHeader = "X-Client-Ip"
+	// proxyTokenHeader の値がそのアプリの proxy_token と一致したときだけ信用する。
+	clientIPHeader   = "X-Client-Ip"
+	proxyTokenHeader = "X-Proxy-Token"
 )
+
+// proxyTokenMatches は、appID のアプリに proxy_token が設定されていて、token が一致するかを返す。
+// 長さの違いが比較時間に出ないよう、固定長のダイジェストで比較する。
+func proxyTokenMatches(apps []appRoutes, appID, token string) bool {
+	got := sha256.Sum256([]byte(token))
+	matched := 0
+	for _, app := range apps {
+		if app.id != appID || app.proxyToken == "" {
+			continue
+		}
+		want := sha256.Sum256([]byte(app.proxyToken))
+		matched |= subtle.ConstantTimeCompare(got[:], want[:])
+	}
+	return matched == 1
+}
 
 // loginRateLimit は、未認証で login_states を作る /auth/login の頻度を制限する。
 //
@@ -28,7 +46,7 @@ const (
 // そのため既定のキーは X-App-Id とし、アプリ全体で 1 つのバケットを共有する。
 // 登録外の値を別バケットにすると、値を変えるだけでバケットとメモリを増やせてしまう。
 //
-// プロキシが X-Internal-Token と X-Client-Ip を付けたときは、アプリ内で IP ごとに数える。
+// プロキシが X-Proxy-Token（アプリの proxy_token）と X-Client-Ip を付けたときは、アプリ内で IP ごとに数える。
 // トークンが一致しない X-Client-Ip は偽装できるため使わない。
 //
 // カウンタはインスタンスごとのメモリ上にあり、複数インスタンス間では共有しない。
@@ -60,8 +78,7 @@ func loginLimitKey(apps []appRoutes, r *http.Request) string {
 	if !known {
 		return unknownAppBucket
 	}
-	trusted, ok := appByInternalToken(apps, r.Header.Get("X-Internal-Token"))
-	if !ok || trusted.id != appID {
+	if !proxyTokenMatches(apps, appID, r.Header.Get(proxyTokenHeader)) {
 		return appID
 	}
 	ip := net.ParseIP(strings.TrimSpace(r.Header.Get(clientIPHeader)))

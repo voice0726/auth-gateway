@@ -9,8 +9,9 @@ import (
 )
 
 var limitTestApps = []appRoutes{
-	{id: "react", internalToken: "react-token"},
-	{id: "tanstack", internalToken: "tanstack-token"},
+	{id: "react", internalToken: "react-token", proxyToken: "react-proxy"},
+	{id: "tanstack", internalToken: "tanstack-token", proxyToken: "tanstack-proxy"},
+	{id: "legacy", internalToken: "legacy-token"},
 }
 
 type loginReq struct{ appID, token, clientIP string }
@@ -19,7 +20,7 @@ func loginStatus(e *echo.Echo, q loginReq) int {
 	r := httptest.NewRequest(http.MethodGet, "/login", nil)
 	r.Header.Set(appIDHeader, q.appID)
 	if q.token != "" {
-		r.Header.Set("X-Internal-Token", q.token)
+		r.Header.Set(proxyTokenHeader, q.token)
 	}
 	if q.clientIP != "" {
 		r.Header.Set(clientIPHeader, q.clientIP)
@@ -68,13 +69,13 @@ func TestLoginRateLimitSharesOneBucketForUnknownApps(t *testing.T) {
 
 func TestLoginRateLimitCountsTrustedClientsSeparately(t *testing.T) {
 	e := newLimitedEcho()
-	attacker := loginReq{appID: "react", token: "react-token", clientIP: "203.0.113.1"}
+	attacker := loginReq{appID: "react", token: "react-proxy", clientIP: "203.0.113.1"}
 	exhaust(e, attacker)
 
 	if got := loginStatus(e, attacker); got != http.StatusTooManyRequests {
 		t.Fatalf("attacker over burst: got %d, want 429", got)
 	}
-	other := loginReq{appID: "react", token: "react-token", clientIP: "203.0.113.2"}
+	other := loginReq{appID: "react", token: "react-proxy", clientIP: "203.0.113.2"}
 	if got := loginStatus(e, other); got != http.StatusOK {
 		t.Fatalf("other client behind proxy: got %d, want 200", got)
 	}
@@ -87,8 +88,14 @@ func TestLoginRateLimitIgnoresClientIPWithoutValidToken(t *testing.T) {
 	cases := map[string]loginReq{
 		"no token":   {appID: "react", clientIP: "203.0.113.1"},
 		"bad token":  {appID: "react", token: "wrong", clientIP: "203.0.113.1"},
-		"other app":  {appID: "react", token: "tanstack-token", clientIP: "203.0.113.1"},
-		"invalid ip": {appID: "react", token: "react-token", clientIP: "not-an-ip"},
+		"other app":  {appID: "react", token: "tanstack-proxy", clientIP: "203.0.113.1"},
+		"invalid ip": {appID: "react", token: "react-proxy", clientIP: "not-an-ip"},
+
+		// 内部トークンは、プロキシの資格として使えない。
+		"internal token":           {appID: "react", token: "react-token", clientIP: "203.0.113.1"},
+		"proxy_token not set":      {appID: "legacy", clientIP: "203.0.113.1"},
+		"empty token, none set":    {appID: "legacy", token: "", clientIP: "203.0.113.1"},
+		"internal token, none set": {appID: "legacy", token: "legacy-token", clientIP: "203.0.113.1"},
 	}
 	for name, q := range cases {
 		t.Run(name, func(t *testing.T) {
