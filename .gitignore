@@ -28,3 +28,6 @@ gha-creds-*.json
 
 # IDEs and editors
 .idea/
+
+# ローカル用の認証情報
+login-client.pat
