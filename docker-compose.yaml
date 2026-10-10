@@ -125,9 +125,9 @@ services:
     volumes:
       - .:/current-dir:delegated
     ports:
-      - "8080:8080"
-      - "4000:3000"
-      - "8800:8800"
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:4000:3000"
+      - "127.0.0.1:8800:8800"
     networks:
       - zitadel
     depends_on:
@@ -167,7 +167,7 @@ services:
     networks:
       - zitadel
     ports:
-      - "15432:5432"
+      - "127.0.0.1:15432:5432"
     volumes:
       - 'data:/var/lib/postgresql/data:rw'
 
