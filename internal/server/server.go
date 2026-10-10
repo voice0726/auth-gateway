@@ -83,6 +83,7 @@ const appIDHeader = "X-App-Id"
 // appRoutes は、1アプリ分のハンドラ。Origin検証など設定依存のガードは構築時に組み込む。
 type appRoutes struct {
 	id, internalToken string
+	proxyToken        string
 	login, callback   echo.HandlerFunc
 	logout, me        echo.HandlerFunc
 	internalSession   echo.HandlerFunc
@@ -92,6 +93,7 @@ func newAppRoutes(cfg config.Config, handler *authhandler.Handler) appRoutes {
 	return appRoutes{
 		id:              cfg.AppID,
 		internalToken:   cfg.InternalToken,
+		proxyToken:      cfg.ProxyToken,
 		login:           handler.Login,
 		callback:        handler.Callback,
 		logout:          logoutOrigin(cfg)(handler.Logout),
@@ -117,7 +119,7 @@ func registerRoutes(e *echo.Echo, apps []appRoutes) {
 		}
 	}
 	auth := e.Group("/auth", noStore)
-	auth.GET("/login", byHeader(func(a appRoutes) echo.HandlerFunc { return a.login }))
+	auth.GET("/login", byHeader(func(a appRoutes) echo.HandlerFunc { return a.login }), loginRateLimit(apps))
 	auth.GET("/callback", byHeader(func(a appRoutes) echo.HandlerFunc { return a.callback }))
 	auth.POST("/logout", byHeader(func(a appRoutes) echo.HandlerFunc { return a.logout }))
 	auth.GET("/me", byHeader(func(a appRoutes) echo.HandlerFunc { return a.me }))

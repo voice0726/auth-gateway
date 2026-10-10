@@ -14,6 +14,9 @@ type Application struct {
 	ClientID      string `yaml:"client_id"`
 	SessionSecret string `yaml:"session_secret"`
 	InternalToken string `yaml:"internal_token"`
+	// ProxyToken は、アプリのリバースプロキシが X-Proxy-Token で示す資格。
+	// 一致したときだけ X-Client-Ip を信用する。InternalToken とは別の値にする。省略時は X-Client-Ip を使わない。
+	ProxyToken string `yaml:"proxy_token"`
 	// DefaultRedirect はログイン後の戻り先が未指定または不正なときの遷移先。省略時は DefaultLoginRedirect。
 	DefaultRedirect string `yaml:"default_redirect"`
 }
@@ -29,6 +32,7 @@ func (c Config) ForApplication(app Application) Config {
 	c.ZitadelRedirectURI = app.Origin + "/auth/callback"
 	c.SessionSecret = app.SessionSecret
 	c.InternalToken = app.InternalToken
+	c.ProxyToken = app.ProxyToken
 	c.DefaultRedirect = app.DefaultRedirect
 	if c.DefaultRedirect == "" {
 		c.DefaultRedirect = DefaultLoginRedirect
@@ -43,6 +47,7 @@ func validateApplications(cfg Config) error {
 		return fmt.Errorf("applications is required; single-app configuration must be migrated")
 	}
 	ids, origins, tokens, secrets, clients := map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
+	proxyTokens := map[string]bool{}
 	for _, app := range cfg.Applications {
 		if !regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`).MatchString(app.ID) || ids[app.ID] {
 			return fmt.Errorf("application id must be unique and use lowercase letters, digits or hyphens")
@@ -54,8 +59,11 @@ func validateApplications(cfg Config) error {
 		if clients[app.ClientID] {
 			return fmt.Errorf("application %s: client_id must be unique", app.ID)
 		}
-		if tokens[app.InternalToken] || secrets[app.SessionSecret] {
+		if tokens[app.InternalToken] || proxyTokens[app.InternalToken] || secrets[app.SessionSecret] {
 			return fmt.Errorf("application %s: internal_token and session_secret must each be unique", app.ID)
+		}
+		if app.ProxyToken != "" && (proxyTokens[app.ProxyToken] || tokens[app.ProxyToken] || app.ProxyToken == app.InternalToken) {
+			return fmt.Errorf("application %s: proxy_token must be unique and differ from every internal_token", app.ID)
 		}
 		if app.DefaultRedirect != "" && !IsSafeRelativePath(app.DefaultRedirect) {
 			return fmt.Errorf("application %s: default_redirect must be a same-origin relative path", app.ID)
@@ -64,6 +72,9 @@ func validateApplications(cfg Config) error {
 			return fmt.Errorf("application %s: %w", app.ID, err)
 		}
 		clients[app.ClientID] = true
+		if app.ProxyToken != "" {
+			proxyTokens[app.ProxyToken] = true
+		}
 		ids[app.ID], origins[strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))], tokens[app.InternalToken], secrets[app.SessionSecret] = true, true, true, true
 	}
 	return nil
