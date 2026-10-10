@@ -100,4 +100,4 @@ PostgreSQL統合テストには既存環境から分離した検証用インス�
 
 `.github/workflows/deploy.yml` は、Pull Requestで `gofmt` の確認、`go vet`、`go test -race ./...`、`go build ./...`、Dockerイメージのビルドを実行します。PostgreSQL統合テストも含みます。mainへのpushでは、テスト成功後にイメージを公開し、`migrate`・`cleanup` Jobのイメージを更新します。続けて `migrate` Jobを実行し、Cloud Runサービスを更新します。
 
-`cleanup` はCloud Schedulerが定期実行します。基盤は `infra/` のTerraformで管理します。手順は [infra/README.md](infra/README.md) を参照してください。
+`deploy_workloads=true` の場合、Cloud Schedulerが `cleanup` を日次実行します。基盤は `infra/` のTerraformで管理します。手順は [infra/README.md](infra/README.md) を参照してください。
