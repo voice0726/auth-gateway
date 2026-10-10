@@ -27,7 +27,7 @@ ZITADELの本人確認を使い、アプリごとに独立したCookieセッシ�
 
 `X-App-Id` が無い、または未登録のときは400です。プロキシはクライアントが送った `X-App-Id` を上書きしてください。ヘッダはアプリの判別だけに使い、認証情報ではありません。
 
-内部APIはアプリ専用の `X-Internal-Token` と転送されたCookieを要求します。トークンからアプリを特定するため、`X-App-Id` は使いません。`/internal/*` をブラウザへ公開しないでください。`/auth/*` と `/internal/*` の応答には `Cache-Control: no-store` を付けます。
+内部APIはアプリ専用の `X-Internal-Token` と転送されたCookieを要求します。トークンからアプリを特定するため、`X-App-Id` は使いません。`/internal/*` をブラウザへ公開しないでください。`GET /healthz` はヘルスチェック用で、`X-App-Id` なしで200を返します。`/auth/*` と `/internal/*` の応答には `Cache-Control: no-store` を付けます。
 
 `proxy_token` を設定したアプリでは、`GET /auth/login` に一致する `X-Proxy-Token` が必要です。欠落や不一致は、レート制限より前に `403` で拒否します。プロキシはクライアントが送った `X-Proxy-Token` と `X-Client-Ip` を上書きしてください。`X-Internal-Token` はこの用途に使えません。callback では `X-Proxy-Token` を要求しません。
 
@@ -40,11 +40,9 @@ Cookie名は `session_<アプリID>`、Domainなし、Path `/`、HttpOnlyです�
 ## 設定と起動
 
 通常のローカル運用はComposeを基準とします。
-`kube/` は独立した技術実験用です。
-Kubernetes設定は旧単一アプリ形式のため、そのままではアプリ別セッション版を起動できません。
-今回のアプリ別セッション導入では、Kubernetesの更新・適用を完了条件に含めません。
+`kube/` は独立した技術実験用です。旧単一アプリ形式のままなので、そのままでは起動できません。
 
-既定は `config/dev.yaml`、Composeでは `config/compose.yaml` を使用します。`CONFIG_PATH` で変更できます。DB・ZITADELの接続設定は共有し、`applications` に次を登録します。
+既定は `config/dev.yaml`、Composeでは `config/compose.yaml` を使用します。`CONFIG_PATH` で変更できます。環境変数 `PORT` を指定すると `server_addr` のポートを上書きします（Cloud Run用）。DB・ZITADELの接続設定は共有し、`applications` に次を登録します。
 
 Dockerイメージには設定ファイルを含めません。Composeはホストの `config/` を読み取り専用でマウントします。Cloud RunではSecret Managerの設定を `CONFIG_PATH` で指定してください。
 
@@ -85,7 +83,7 @@ PostgreSQLイメージの初回初期化スクリプトだけでは既存ボリ�
 
 既存行は削除もアプリへの自動割り当てもしません。`app_id` がない旧セッションは新しい認証処理では受け付けないため、再ログインが必要です。旧Cookie `session_id` と旧Redisキーは使用しません。Redisは廃止したので、設定の `redis_*` を削除してください（残っていると起動時に拒否されます）。`migrate` が `login_states` を作成します。切替時に進行中だったログインは失敗するため、再度ログインしてください。ZITADELのユーザー・各アプリの業務データは移行対象ではありません。
 
-現在の設定例はReactのみを登録しています。TanStackの現行コードは独自パスワード認証であり、gatewayへの移行は別途必要です。
+現在の設定例はReactのみを登録しています。
 
 ## 検証
 
@@ -98,4 +96,8 @@ docker compose config --quiet
 
 PostgreSQL統合テストには既存環境から分離した検証用インスタンスを使います。PostgreSQLは `postgres` ユーザー、パスワード `test-only` とし、`GATEWAY_TEST_DB_PORT` にlocalhostの公開ポートを設定して `go test ./...` を実行します。テストは検証用PostgreSQL内に一意なDBを作成します。変数未指定時は統合テストをスキップします。
 
-この手順はComposeとローカル開発向けです。既存の `kube/` マニフェストには新しい設定形式をまだ反映していません。Kubernetesへ適用する前に、設定とプロキシを更新する必要があります。
+## CI と本番デプロイ
+
+`.github/workflows/deploy.yml` は、Pull Requestで `gofmt` の確認、`go vet`、`go test -race ./...`、`go build ./...`、Dockerイメージのビルドを実行します。PostgreSQL統合テストも含みます。mainへのpushでは、テスト成功後にイメージを公開し、`migrate`・`cleanup` Jobのイメージを更新します。続けて `migrate` Jobを実行し、Cloud Runサービスを更新します。
+
+`cleanup` はCloud Schedulerが定期実行します。基盤は `infra/` のTerraformで管理します。手順は [infra/README.md](infra/README.md) を参照してください。
