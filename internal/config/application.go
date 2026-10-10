@@ -15,7 +15,8 @@ type Application struct {
 	SessionSecret string `yaml:"session_secret"`
 	InternalToken string `yaml:"internal_token"`
 	// ProxyToken は、アプリのリバースプロキシが X-Proxy-Token で示す資格。
-	// 一致したときだけ X-Client-Ip を信用する。InternalToken とは別の値にする。省略時は X-Client-Ip を使わない。
+	// 設定時は /auth/login で一致を必須とする。InternalToken とは別の値にする。
+	// 一致したときだけ X-Client-Ip を信用する。省略時は X-Client-Ip を使わない。
 	ProxyToken string `yaml:"proxy_token"`
 	// DefaultRedirect はログイン後の戻り先が未指定または不正なときの遷移先。省略時は DefaultLoginRedirect。
 	DefaultRedirect string `yaml:"default_redirect"`

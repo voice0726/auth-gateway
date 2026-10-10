@@ -40,6 +40,24 @@ func proxyTokenMatches(apps []appRoutes, appID, token string) bool {
 	return matched == 1
 }
 
+func loginProxyToken(apps []appRoutes) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			r := c.Request()
+			appID := r.Header.Get(appIDHeader)
+			for _, app := range apps {
+				if app.id == appID && app.proxyToken != "" {
+					if !proxyTokenMatches(apps, appID, r.Header.Get(proxyTokenHeader)) {
+						return echo.NewHTTPError(http.StatusForbidden, "proxy token forbidden")
+					}
+					break
+				}
+			}
+			return next(c)
+		}
+	}
+}
+
 // loginRateLimit は、未認証で login_states を作る /auth/login の頻度を制限する。
 //
 // gateway はアプリのリバースプロキシ経由で呼ばれるため、接続元 IP は全利用者で同じになる。
