@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgtype v1.14.4
-	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackc/pgx/v5 v5.11.0
 	github.com/labstack/echo/v4 v4.16.0
 	github.com/thessem/zap-prettyconsole v0.7.0
 	github.com/zitadel/oidc/v3 v3.49.2
