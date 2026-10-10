@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:15
+        image: postgres:17
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: test-only
@@ -46,11 +46,20 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Check Go formatting
+        run: test -z "$(gofmt -l .)"
+
       - name: Run go vet
         run: go vet ./...
 
-      - name: Run tests
-        run: go test ./...
+      - name: Run race-enabled tests
+        run: go test -race ./...
+
+      - name: Build Go packages
+        run: go build ./...
+
+      - name: Build Docker image
+        run: docker build .
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
