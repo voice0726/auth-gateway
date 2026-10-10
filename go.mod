@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgtype v1.14.4
-	github.com/jackc/pgx/v5 v5.8.0
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/labstack/echo/v4 v4.16.0
 	github.com/thessem/zap-prettyconsole v0.7.0
 	github.com/zitadel/oidc/v3 v3.45.1
@@ -14,8 +14,8 @@ require (
 	go.uber.org/zap v1.28.0
 	golang.org/x/time v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
-	gorm.io/driver/postgres v1.6.0
-	gorm.io/gorm v1.31.1
+	gorm.io/driver/postgres v1.6.3
+	gorm.io/gorm v1.31.2
 	moul.io/zapgorm2 v1.3.0
 )
 
