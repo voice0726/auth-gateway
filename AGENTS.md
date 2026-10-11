@@ -36,8 +36,11 @@ DB に触れる変更では、使い捨ての PostgreSQL（ユーザー `postgre
 
 ```sh
 docker run -d --rm --name gateway-test-db -e POSTGRES_PASSWORD=test-only -p 127.0.0.1:25432:5432 postgres:17
-GATEWAY_TEST_DB_PORT=25432 go test -race ./...
+until docker exec gateway-test-db pg_isready -U postgres >/dev/null 2>&1; do sleep 1; done
+GATEWAY_TEST_DB_PORT=25432 go test -race ./...; docker stop gateway-test-db
 ```
+
+テストが失敗してもコンテナを止めます（`;` で続けているため）。`EnsureDatabase` は接続エラーを再試行しないので、`pg_isready` で起動完了を待ってから実行します。
 
 Compose の `db`（15432）は開発データを持つので、統合テストに使わないでください。
 Compose を変えたときは `docker compose config --quiet` も通します。
