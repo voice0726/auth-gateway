@@ -249,6 +249,22 @@ test('all open main contexts need current fixed PR results, independent of API o
   }
 });
 
+test('an open PR-only context does not override fixed results for required main contexts', () => {
+  const prOnlyContext = { ...mainInstance, analysis_key: 'codeql.yml:other-scan', category: 'javascript' };
+  const result = evaluatePullRequest({
+    checkRuns: [{ id: 1, name: 'test', status: 'completed', conclusion: 'success' }],
+    statuses: { state: 'success', total_count: 0, statuses: [] },
+    mainInstances: [mainInstance],
+    prInstances: [
+      prInstance('fixed', shaA, 'refs/pull/1/merge', mainInstance),
+      prInstance('open', shaA, 'refs/pull/1/merge', prOnlyContext),
+    ],
+    prRef: 'refs/pull/1/merge',
+    headSha: shaA,
+  });
+  assert.equal(result.disposition, 'verified');
+});
+
 test('prepare persists a processing reservation before handing off an alert', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'code-scanning-loop-'));
   const outputPath = join(temp, 'output');

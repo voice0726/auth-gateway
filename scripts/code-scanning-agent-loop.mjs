@@ -138,7 +138,8 @@ export function evaluatePullRequest({ checkRuns, statuses = {}, mainInstances = 
     currentByContext.set(key, instances);
   }
   const instanceCurrent = requiredContexts.size > 0 && [...requiredContexts].every((key) => currentByContext.has(key));
-  const hasCurrentOpenInstance = currentPRInstances.some((instance) => instance.state === 'open');
+  const hasCurrentOpenInstance = [...requiredContexts].some((key) =>
+    (currentByContext.get(key) ?? []).some((instance) => instance.state === 'open'));
   const contextsFixed = requiredContexts.size > 0 && [...requiredContexts].every((key) => {
     const instances = currentByContext.get(key) ?? [];
     return instances.length > 0 && instances.every((instance) => instance.state === 'fixed');
