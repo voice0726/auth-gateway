@@ -285,6 +285,41 @@ test('prepare persists a processing reservation before handing off an alert', as
   }
 });
 
+test('prepare summary keeps untrusted evidence in one escaped table cell', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'code-scanning-summary-escape-'));
+  const summaryPath = join(temp, 'summary');
+  const outputPath = join(temp, 'output');
+  const previousFetch = globalThis.fetch;
+  const previousEnv = { ...process.env };
+  const key = `91@${shaA}`;
+  const evidence = '\\| ...\r\n## forged\r| carriage\n| new row';
+  const ledger = { version: 1, alerts: { [key]: { status: 'blocked', evidence } }, updated_at: null };
+  globalThis.fetch = async (url, options = {}) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
+    if (path.endsWith('/code-scanning/alerts')) return Response.json([]);
+    if (path.endsWith('/pulls')) return Response.json([]);
+    throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
+  };
+  Object.assign(process.env, {
+    GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+    GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath,
+    GITHUB_STEP_SUMMARY: summaryPath, REQUESTED_MODE: 'scan',
+  });
+  try {
+    await main('prepare');
+    const summary = await readFile(summaryPath, 'utf8');
+    const tableRows = summary.split('\n').filter((line) => line.startsWith('|'));
+    assert.equal(tableRows.length, 3);
+    assert.equal(tableRows[2], String.raw`| ${key} | blocked | \\\| ... ## forged \| carriage \| new row |`);
+  } finally {
+    globalThis.fetch = previousFetch;
+    for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+    Object.assign(process.env, previousEnv);
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('scheduled prepare verifies an open main alert from a current fixed PR instance', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'code-scanning-verify-'));
   const outputPath = join(temp, 'output');
@@ -642,14 +677,15 @@ test('prepare recovers a validated PR created before an interrupted initial resu
 });
 
 test('prepare reconciles closed PRs across ledger states without recreating their alert', async () => {
-  for (const [status, merged] of [['pending_pr', false], ['verified', false], ['blocked', false], ['verified', true]]) {
+  for (const [status, merged] of [['pending_pr', false], ['verified', false], ['blocked', false], ['verified', true], ['fixed', false], ['dismissed', false]]) {
     const temp = await mkdtemp(join(tmpdir(), 'code-scanning-closed-pr-'));
     const outputPath = join(temp, 'output');
     const previousFetch = globalThis.fetch;
     const previousEnv = { ...process.env };
     const key = `31@${shaA}`;
-    const mainSha = merged ? shaA : shaB;
-    let ledger = { version: 1, alerts: { [key]: { status, attempts: 1, pull_request: 56 } }, updated_at: null };
+    const mainSha = merged || ['fixed', 'dismissed'].includes(status) ? shaA : shaB;
+    let ledger = { version: 1, alerts: { [key]: { status, attempts: 1, pull_request: 56, ...(['fixed', 'dismissed'].includes(status) ? { alert_state: status } : {}) } }, updated_at: null };
+    let closedPRReads = 0;
     globalThis.fetch = async (url, options = {}) => {
       const path = new URL(url).pathname;
       if (path.endsWith('/contents/ledger.json') && options.method === 'PUT') {
@@ -659,7 +695,10 @@ test('prepare reconciles closed PRs across ledger states without recreating thei
       if (path.endsWith('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
       if (path.endsWith('/code-scanning/alerts')) return Response.json([{ number: 31, state: 'open', most_recent_instance: { commit_sha: mainSha } }]);
       if (path.endsWith('/pulls')) return Response.json([]);
-      if (path.endsWith('/pulls/56')) return Response.json({ number: 56, state: 'closed', merged, merged_at: merged ? '2026-10-11T00:00:00Z' : null });
+      if (path.endsWith('/pulls/56')) {
+        closedPRReads += 1;
+        return Response.json({ number: 56, state: 'closed', merged, merged_at: merged ? '2026-10-11T00:00:00Z' : null });
+      }
       throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
     };
     Object.assign(process.env, {
@@ -668,9 +707,17 @@ test('prepare reconciles closed PRs across ledger states without recreating thei
     });
     try {
       await main('prepare');
-      assert.equal(ledger.alerts[key].status, merged ? 'merged' : 'blocked');
-      assert.equal(ledger.alerts[key].human_closed, !merged);
-      if (!merged) assert.match(ledger.alerts[key].evidence, /closed without merging/);
+      if (['fixed', 'dismissed'].includes(status)) {
+        assert.equal(ledger.alerts[key].status, status);
+        assert.equal(ledger.alerts[key].alert_state, status);
+        assert.equal(ledger.alerts[key].human_closed, undefined);
+        assert.equal(closedPRReads, 0);
+        assert.equal(selectAlert([alert(31, shaB)], { alerts: { [key]: ledger.alerts[key] } }, [], 'example/repo')?.number, 31);
+      } else {
+        assert.equal(ledger.alerts[key].status, merged ? 'merged' : 'blocked');
+        assert.equal(ledger.alerts[key].human_closed, !merged);
+        if (!merged) assert.match(ledger.alerts[key].evidence, /closed without merging/);
+      }
       assert.match(await readFile(outputPath, 'utf8'), /has_work=false/);
     } finally {
       globalThis.fetch = previousFetch;

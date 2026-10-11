@@ -260,7 +260,10 @@ function setOutput(name, value) {
 }
 
 function markdownCell(value) {
-  return String(value ?? '').replaceAll('|', '\\|').replaceAll('\n', ' ');
+  return String(value ?? '')
+    .replace(/\r\n|\r|\n/g, ' ')
+    .replaceAll('\\', '\\\\')
+    .replaceAll('|', '\\|');
 }
 
 async function writeSummary(ledger, current = null) {
@@ -292,7 +295,8 @@ async function prepare() {
   const trackedPRs = new Map();
   const pausedAlertPRs = new Set();
   for (const [key, entry] of Object.entries(ledger.alerts ?? {})) {
-    if (!entry.pull_request || entry.status === 'merged' || entry.human_closed === true) continue;
+    if (!entry.pull_request || ['merged', 'fixed', 'dismissed'].includes(entry.status)
+      || ['fixed', 'dismissed'].includes(entry.alert_state) || entry.human_closed === true) continue;
     trackedPRs.set(entry.pull_request, key);
     let pr = pulls.find((candidate) => candidate.number === entry.pull_request);
     if (!pr) {
