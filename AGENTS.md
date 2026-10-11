@@ -21,7 +21,7 @@ ZITADEL の本人確認を使い、アプリごとに独立した Cookie セッ�
 
 ## 検証
 
-変更後は CI（`.github/workflows/deploy.yml`）と同じ項目を通します。
+変更後は CI（`.github/workflows/deploy.yml`）の Go の検証項目と同じものを通します。`Dockerfile` を変えたときは、CI と同じく `docker build .` も通します。
 
 ```sh
 test -z "$(gofmt -l .)"
@@ -37,11 +37,11 @@ DB に触れる変更では、使い捨ての PostgreSQL（ユーザー `postgre
 ```sh
 docker run -d --rm --name gateway-test-db -e POSTGRES_PASSWORD=test-only -p 127.0.0.1:25432:5432 postgres:17 && {
   for _ in $(seq 60); do docker exec gateway-test-db pg_isready -U postgres >/dev/null 2>&1 && break; sleep 1; done
-  GATEWAY_TEST_DB_PORT=25432 go test -race ./...; docker stop gateway-test-db
+  GATEWAY_TEST_DB_PORT=25432 go test -race ./...; rc=$?; docker stop gateway-test-db; exit $rc
 }
 ```
 
-`docker run` が失敗したときは、待機もテストも実行しません。起動待ちは最大 60 秒です。待ちきれなければテストが失敗します。テストが失敗してもコンテナは止めます。`EnsureDatabase` は接続エラーを再試行しないので、`pg_isready` で起動完了を待ってから実行します。
+`docker run` が失敗したときは、待機もテストも実行しません。起動待ちは最大 60 秒です。待ちきれなければテストが失敗します。テストが失敗してもコンテナは止め、`go test` の終了コードをそのまま返します。この手順はスクリプトとして実行してください。対話シェルに貼ると `exit` でシェルが閉じます。`EnsureDatabase` は接続エラーを再試行しないので、`pg_isready` で起動完了を待ってから実行します。
 
 Compose の `db`（15432）は開発データを持つので、統合テストに使わないでください。
 Compose を変えたときは `docker compose config --quiet` も通します。
