@@ -1,0 +1,132 @@
+name: Code scanning agent loop
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Scan main alerts or resume one alert PR
+        type: choice
+        options: [scan, followup]
+        default: scan
+      pr_number:
+        description: Required only for a follow-up run
+        type: string
+        required: false
+
+concurrency:
+  group: code-scanning-agent-loop-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      checks: read
+      contents: write
+      security-events: read
+      pull-requests: read
+      statuses: read
+    outputs:
+      has_work: ${{ steps.prepare.outputs.has_work }}
+      task_mode: ${{ steps.prepare.outputs.task_mode }}
+      expected: ${{ steps.prepare.outputs.expected }}
+      prompt_b64: ${{ steps.prepare.outputs.prompt_b64 }}
+      pr_number: ${{ steps.prepare.outputs.pr_number }}
+      pr_head_sha: ${{ steps.prepare.outputs.pr_head_sha }}
+      followup_attempt: ${{ steps.prepare.outputs.followup_attempt }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - id: prepare
+        name: Select and reserve the next alert or PR follow-up
+        run: node scripts/code-scanning-agent-loop.mjs prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_SHA: ${{ github.sha }}
+          REQUESTED_MODE: ${{ github.event.inputs.mode || 'scan' }}
+          PR_NUMBER: ${{ github.event.inputs.pr_number }}
+
+  agent:
+    needs: prepare
+    if: needs.prepare.outputs.has_work == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      result_b64: ${{ steps.normalize.outputs.result_b64 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - id: prompt
+        run: node scripts/code-scanning-agent-loop.mjs decode-prompt
+        env:
+          PROMPT_B64: ${{ needs.prepare.outputs.prompt_b64 }}
+      - id: agent
+        continue-on-error: true
+        uses: pullfrog/pullfrog@ad4283a862b8377cb525a0f5bf30f17c023b18ea
+        with:
+          prompt_file: ${{ steps.prompt.outputs.path }}
+          timeout: 75m
+          output_schema: |
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["status", "alert_number", "analysis_sha", "evidence"],
+              "properties": {
+                "status": { "type": "string", "enum": ["vulnerability", "false_positive", "blocked", "retry"] },
+                "alert_number": { "type": "integer" },
+                "analysis_sha": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+                "evidence": { "type": "string", "minLength": 1 },
+                "pull_request": { "type": "integer", "minimum": 1 }
+              },
+              "allOf": [{
+                "if": { "properties": { "status": { "const": "vulnerability" } } },
+                "then": { "required": ["pull_request"] }
+              }]
+            }
+          push: restricted
+          shell: restricted
+          progress_comments: disabled
+      - name: Remove the temporary prompt from the checkout
+        if: always()
+        run: node scripts/code-scanning-agent-loop.mjs cleanup-prompt
+      - id: normalize
+        if: always()
+        run: node scripts/code-scanning-agent-loop.mjs normalize
+        env:
+          EXPECTED_ALERT: ${{ needs.prepare.outputs.expected }}
+          AGENT_RESULT: ${{ steps.agent.outputs.result }}
+
+  finalize:
+    needs: [prepare, agent]
+    if: always() && needs.prepare.outputs.has_work == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - name: Validate the result, record it, and queue the next item
+        run: node scripts/code-scanning-agent-loop.mjs finalize
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_SHA: ${{ github.sha }}
+          TASK_MODE: ${{ needs.prepare.outputs.task_mode }}
+          EXPECTED_ALERT: ${{ needs.prepare.outputs.expected }}
+          PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          PR_HEAD_SHA: ${{ needs.prepare.outputs.pr_head_sha }}
+          FOLLOWUP_ATTEMPT: ${{ needs.prepare.outputs.followup_attempt }}
+          AGENT_RESULT_B64: ${{ needs.agent.outputs.result_b64 }}
