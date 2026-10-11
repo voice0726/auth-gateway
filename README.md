@@ -106,6 +106,8 @@ PostgreSQL統合テストには既存環境から分離した検証用インス�
 
 alert番号と解析commit SHAごとの履歴は `automation/code-scanning-ledger` branchに保存します。初回調査と同じPRでの修正を合わせ、最大2回実行します。PRの `test` check成功を確認します。mainでopenの解析contextごとに、PR instanceが `fixed` であることを確認します。instance解析SHAは現在のhead SHAまたはmerge SHAと一致する必要があります。条件を満たすalertは「修正検証済み（verified）」として記録します。チェック未完了やCodeQL解析未到着は試行を消費しません。次回scheduleで再評価します。
 
-ledgerが追跡するPRを人が閉じた場合は、自動で作り直しません。未mergeならblocked、merge済みならmergedとして記録します。
+ledgerが追跡するPRの未merge閉鎖は、アラート番号単位で停止を記録します。mainの解析SHAが変わっても再作成しません。merge済みならmergedとして記録します。
+
+追跡PRがready化やmarker・branch不一致になった場合は、理由を記録してblockedにします。自動修正を停止します。
 
 workflowの `GITHUB_TOKEN` には Code scanning alerts、Checks、Commit statuses、Pull requestsのread権限が必要です。ContentsとActionsにはwrite権限が必要です。PullfrogはOIDC経由で短命のGitHub App tokenを取得します。実行モデルはPullfrog consoleのrepository設定を使います。
