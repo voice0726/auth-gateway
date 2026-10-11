@@ -103,6 +103,15 @@ test('a ready PR suppresses a new SHA only when the ledger tracks that PR', () =
   assert.equal(selectAlert([current], tracked, [readyPR], 'example/repo'), undefined);
 });
 
+test('terminal tracked PRs do not suppress a later analysis SHA', () => {
+  const current = alert(14, shaB);
+  const oldPR = alertPR(14, shaA, { number: 72 });
+  for (const status of ['fixed', 'dismissed', 'merged', 'false_positive']) {
+    const ledger = { alerts: { [`14@${shaA}`]: { status, pull_request: 72 } } };
+    assert.equal(selectAlert([current], ledger, [oldPR], 'example/repo'), current, status);
+  }
+});
+
 test('only a matching same-repository draft PR suppresses an alert', () => {
   const candidate = alert(10, shaA);
   const invalidPRs = [
@@ -885,6 +894,44 @@ test('follow-up preserves an advanced PR head when the agent output is empty', a
     assert.equal(writes, 1);
     assert.equal(prReads, 1);
     assert.equal(dispatches, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+    for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+    Object.assign(process.env, previousEnv);
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('follow-up blocks a mismatched PR result even when the tracked head advanced', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'code-scanning-followup-pr-mismatch-'));
+  const previousFetch = globalThis.fetch;
+  const previousEnv = { ...process.env };
+  const key = `63@${shaA}`;
+  let ledger = { version: 1, alerts: { [key]: { status: 'processing_followup', attempts: 1, reservation_id: reservationA, pull_request: 63, followup_sha: shaA } }, updated_at: null };
+  const pr = alertPR(63, shaA, { number: 63, head: { ...alertPR(63, shaA).head, sha: shaB } });
+  globalThis.fetch = async (url, options = {}) => {
+    if (url.includes('/contents/ledger.json') && options.method === 'PUT') {
+      ledger = JSON.parse(Buffer.from(JSON.parse(options.body).content, 'base64').toString('utf8'));
+      return Response.json({ content: { sha: 'next-ledger-sha' } });
+    }
+    if (url.includes('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
+    if (url.endsWith('/pulls/63')) return Response.json(pr);
+    if (url.includes('/actions/workflows/code-scanning-agent-loop.yml/dispatches')) return new Response(null, { status: 204 });
+    throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
+  };
+  Object.assign(process.env, {
+    GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+    GITHUB_API_URL: 'https://api.github.test', GITHUB_STEP_SUMMARY: join(temp, 'summary'),
+    EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 63, analysis_sha: shaA, attempt: 1, reservation_id: reservationA, pr_number: 63, pr_head_sha: shaA })).toString('base64'),
+    AGENT_RESULT_B64: Buffer.from(JSON.stringify({ status: 'vulnerability', alert_number: 63, analysis_sha: shaA, evidence: 'The agent reported another PR.', pull_request: 64 })).toString('base64'),
+    TASK_MODE: 'followup', PR_NUMBER: '63', PR_HEAD_SHA: shaA, FOLLOWUP_ATTEMPT: '1',
+  });
+  try {
+    await main('finalize');
+    assert.equal(ledger.alerts[key].status, 'blocked');
+    assert.equal(ledger.alerts[key].last_followup_result, 'blocked');
+    assert.equal(ledger.alerts[key].head_sha, shaB);
+    assert.match(ledger.alerts[key].evidence, /different pull request/);
   } finally {
     globalThis.fetch = previousFetch;
     for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];

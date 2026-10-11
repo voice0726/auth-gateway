@@ -60,6 +60,11 @@ export function selectAlert(alerts, ledger, openPRs, repoFullName) {
       const marker = pr.body?.match(markerPattern);
       if (!marker || Number(marker[1]) !== alert.number) return false;
       const expected = { number: alert.number, analysis_sha: marker[2] };
+      const history = ledger.alerts?.[`${marker[1]}@${marker[2]}`];
+      const isTerminal = history?.pull_request === pr.number
+        && (['fixed', 'dismissed', 'merged', 'false_positive'].includes(history.status)
+          || ['fixed', 'dismissed'].includes(history.alert_state));
+      if (isTerminal) return false;
       if (pullRequestValidationError(pr, expected, repoFullName) === null) return true;
       const isTracked = Object.entries(ledger.alerts ?? {}).some(([historyKey, history]) =>
         historyKey === `${marker[1]}@${marker[2]}` && history.pull_request === pr.number);
@@ -622,6 +627,11 @@ async function finalizeFollowup() {
   }
   const raw = process.env.AGENT_RESULT_B64 ? Buffer.from(process.env.AGENT_RESULT_B64, 'base64').toString('utf8') : '';
   const result = normalizeResult(raw, expected);
+  const mismatchedPRResult = result.status === 'vulnerability' && result.pull_request !== prNumber;
+  if (mismatchedPRResult) {
+    result.status = 'blocked';
+    result.evidence = 'Follow-up result referenced a different pull request.';
+  }
   const pr = await request(ctx, `/repos/${ctx.owner}/${ctx.repo}/pulls/${prNumber}`);
   if (pr.state === 'closed') {
     const merged = Boolean(pr.merged || pr.merged_at);
@@ -652,9 +662,16 @@ async function finalizeFollowup() {
   entry.attempts = attempt;
   entry.last_followup_sha = process.env.PR_HEAD_SHA;
   entry.updated_at = new Date().toISOString();
-  if (result.status === 'vulnerability' && result.pull_request !== prNumber) {
-    result.status = 'blocked';
-    result.evidence = 'Follow-up result referenced a different pull request.';
+  if (mismatchedPRResult) {
+    entry.status = 'blocked';
+    entry.evidence = result.evidence;
+    if (pr.head.sha !== process.env.PR_HEAD_SHA) entry.head_sha = pr.head.sha;
+    ledger.alerts[key] = entry;
+    ledger.updated_at = new Date().toISOString();
+    await writeLedger(ctx, ledger, sha);
+    await writeSummary(ledger, expected);
+    await dispatchNext(ctx);
+    return;
   }
   const pushedCommit = pr.head.sha !== process.env.PR_HEAD_SHA;
   if (pushedCommit && result.status !== 'vulnerability') {
