@@ -180,6 +180,18 @@ test('a confirmed CI failure can trigger repair before a PR analysis arrives', (
   assert.deepEqual(result, { disposition: 'repair', reason: 'ci_failure', instanceCurrent: false, ciPassed: false });
 });
 
+test('aggregate commit-status failure is honored when the returned statuses page is incomplete', () => {
+  const result = evaluatePullRequest({
+    checkRuns: [{ id: 1, name: 'test', status: 'completed', conclusion: 'success' }],
+    statuses: { state: 'failure', total_count: 101, statuses: [{ id: 3, context: 'visible', state: 'success' }] },
+    mainInstances: [mainInstance],
+    prInstances: [],
+    prRef: 'refs/pull/1/merge',
+    headSha: shaA,
+  });
+  assert.deepEqual(result, { disposition: 'repair', reason: 'ci_failure', instanceCurrent: false, ciPassed: false });
+});
+
 test('the newest run for a check replaces an older failure and pending status contexts block verification', () => {
   const checks = [
     { id: 10, name: 'test', status: 'completed', conclusion: 'failure', app: { id: 7 }, external_id: 'old-job-id' },

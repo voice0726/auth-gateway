@@ -118,7 +118,8 @@ export function evaluatePullRequest({ checkRuns, statuses = {}, mainInstances = 
     if (!previous || (status.id ?? 0) > (previous.id ?? 0)) latestStatuses.set(status.context, status);
   }
   const commitStatuses = [...latestStatuses.values()];
-  const statusFailure = commitStatuses.some((status) => ['failure', 'error'].includes(status.state));
+  const statusFailure = ['failure', 'error'].includes(statuses.state)
+    || commitStatuses.some((status) => ['failure', 'error'].includes(status.state));
   const ciFailed = checks.some((check) => ['failure', 'cancelled', 'timed_out', 'action_required', 'stale', 'startup_failure'].includes(check.conclusion)) || statusFailure;
   const testRuns = checks.filter((check) => check.name === 'test').sort((left, right) => (right.id ?? 0) - (left.id ?? 0));
   const testRun = testRuns[0];
