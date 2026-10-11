@@ -91,6 +91,15 @@ test('a valid open PR for an older analysis SHA suppresses the same alert number
   assert.equal(selectAlert([current], { alerts: {} }, [alertPR(12, shaA)], 'example/repo'), undefined);
 });
 
+test('a ready PR suppresses a new SHA only when the ledger tracks that PR', () => {
+  const current = alert(13, shaB);
+  const readyPR = alertPR(13, shaA, { number: 71, draft: false });
+  const untracked = { alerts: {} };
+  assert.equal(selectAlert([current], untracked, [readyPR], 'example/repo'), current);
+  const tracked = { alerts: { [`13@${shaA}`]: { status: 'blocked', pull_request: 71 } } };
+  assert.equal(selectAlert([current], tracked, [readyPR], 'example/repo'), undefined);
+});
+
 test('only a matching same-repository draft PR suppresses an alert', () => {
   const candidate = alert(10, shaA);
   const invalidPRs = [
@@ -303,6 +312,84 @@ test('scheduled prepare verifies an open main alert from a current fixed PR inst
   }
 });
 
+test('verified PRs are reevaluated and stale verification metadata is cleared on downgrade', async () => {
+  const cases = [
+    { name: 'new head pending', headSha: shaB, attempts: 1, checkRuns: [{ id: 1, name: 'test', status: 'completed', conclusion: 'success', app: { id: 7 } }], prInstances: [prInstance('fixed', shaA, 'refs/pull/64/merge')], expected: 'pending_pr' },
+    { name: 'verified same head pending then verified', headSha: shaA, attempts: 1, last_followup_sha: shaA, checkRuns: [{ id: 1, name: 'test', status: 'in_progress', conclusion: null, app: { id: 7 } }], prInstances: [prInstance('fixed', shaA, 'refs/pull/64/merge')], expected: 'pending_pr', secondStage: true },
+    { name: 'interrupted reservation pending then verified', headSha: shaA, attempts: 2, status: 'processing_followup', followup_sha: shaA, checkRuns: [{ id: 1, name: 'test', status: 'in_progress', conclusion: null, app: { id: 7 } }], prInstances: [prInstance('fixed', shaA, 'refs/pull/64/merge')], expected: 'pending_pr', secondStage: true },
+    { name: 'same head rerun failure', headSha: shaA, attempts: 2, last_followup_sha: shaA, checkRuns: [{ id: 1, name: 'test', status: 'completed', conclusion: 'failure', app: { id: 7 } }], prInstances: [prInstance('open', shaA, 'refs/pull/64/merge')], expected: 'blocked' },
+    { name: 'interrupted attempt at limit failure', headSha: shaA, attempts: 2, status: 'processing_followup', followup_sha: shaA, checkRuns: [{ id: 1, name: 'test', status: 'completed', conclusion: 'failure', app: { id: 7 } }], prInstances: [prInstance('open', shaA, 'refs/pull/64/merge')], expected: 'blocked' },
+    { name: 'new head open alert at limit', headSha: shaB, attempts: 2, checkRuns: [{ id: 1, name: 'test', status: 'completed', conclusion: 'success', app: { id: 7 } }], prInstances: [prInstance('open', shaB, 'refs/pull/64/merge')], expected: 'blocked' },
+    { name: 'same head passes reevaluation', headSha: shaA, attempts: 1, checkRuns: [{ id: 1, name: 'test', status: 'completed', conclusion: 'success', app: { id: 7 } }], prInstances: [prInstance('fixed', shaA, 'refs/pull/64/merge')], expected: 'verified' },
+  ];
+  for (const scenario of cases) {
+    const temp = await mkdtemp(join(tmpdir(), 'code-scanning-verified-reevaluation-'));
+    const outputPath = join(temp, 'output');
+    const previousFetch = globalThis.fetch;
+    const previousEnv = { ...process.env };
+    const key = `64@${shaA}`;
+    let stage = 0;
+    const verification = {
+      status: scenario.status ?? 'verified', attempts: scenario.attempts, pull_request: 64,
+      analyzed_sha: shaA, verified_head_sha: shaA,
+      ...(scenario.followup_sha ? { followup_sha: scenario.followup_sha } : {}),
+      ...(scenario.last_followup_sha ? { last_followup_sha: scenario.last_followup_sha } : {}),
+    };
+    let savedLedger = { version: 1, alerts: { [key]: verification }, updated_at: null };
+    const pr = {
+      number: 64, state: 'open', draft: true, base: { ref: 'main' },
+      head: { ref: `security/code-scanning/alert-64-${shaA}`, sha: scenario.headSha, repo: { full_name: 'example/repo' } },
+      merge_commit_sha: shaB, html_url: 'https://github.test/example/repo/pull/64',
+      body: `<!-- code-scanning-alert:64 analysis:${shaA} -->`,
+    };
+    globalThis.fetch = async (url, options = {}) => {
+      const parsed = new URL(url);
+      const path = parsed.pathname;
+      if (path.endsWith('/contents/ledger.json') && options.method === 'PUT') {
+        savedLedger = JSON.parse(Buffer.from(JSON.parse(options.body).content, 'base64').toString('utf8'));
+        return Response.json({ content: { sha: 'next-ledger-sha' } });
+      }
+      if (path.endsWith('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(savedLedger)).toString('base64'), sha: 'ledger-sha' });
+      if (path.endsWith('/code-scanning/alerts')) return Response.json([{ number: 64, state: 'open', most_recent_instance: { commit_sha: shaA } }]);
+      if (path.endsWith('/pulls')) return Response.json([pr]);
+      if (path.endsWith('/check-runs')) return Response.json({ check_runs: stage === 1 && scenario.secondStage ? [{ id: 2, name: 'test', status: 'completed', conclusion: 'success', app: { id: 7 } }] : scenario.checkRuns });
+      if (path.endsWith('/status')) return Response.json({ state: 'success', total_count: 0, statuses: [] });
+      if (path.endsWith('/instances') && parsed.searchParams.get('ref') === 'refs/heads/main') return Response.json([mainInstance]);
+      if (path.endsWith('/instances')) return Response.json(stage === 1 && scenario.secondStage ? [prInstance('fixed', scenario.headSha, 'refs/pull/64/merge')] : scenario.prInstances);
+      throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
+    };
+    Object.assign(process.env, {
+      GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+      GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath, REQUESTED_MODE: 'scan', RUNNER_TEMP: temp,
+    });
+    try {
+      await main('prepare');
+      let entry = savedLedger.alerts[key];
+      if (scenario.expected === 'pending_pr' || scenario.expected === 'blocked') {
+        assert.equal(entry.status, scenario.expected, scenario.name);
+        assert.equal(entry.analyzed_sha, undefined, scenario.name);
+        assert.equal(entry.verified_head_sha, undefined, scenario.name);
+      }
+      if (scenario.secondStage) {
+        stage = 1;
+        await main('prepare');
+        entry = savedLedger.alerts[key];
+        assert.equal(entry.status, 'verified', scenario.name);
+        assert.equal(entry.verified_head_sha, scenario.headSha, scenario.name);
+      }
+      if (scenario.expected === 'verified') {
+        assert.equal(entry.status, 'verified', scenario.name);
+        assert.equal(entry.verified_head_sha, scenario.headSha, scenario.name);
+      }
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+      Object.assign(process.env, previousEnv);
+      await rm(temp, { recursive: true, force: true });
+    }
+  }
+});
+
 test('scheduled prepare reserves same-PR repair when CI fails before CodeQL analysis arrives', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'code-scanning-repair-'));
   const outputPath = join(temp, 'output');
@@ -423,7 +510,7 @@ test('prepare reconciles closed PRs across ledger states without recreating thei
   }
 });
 
-test('prepare records explicit blocked reasons for tracked PRs that become invalid', async () => {
+test('prepare blocks invalid verified PRs and a ready tracked PR suppresses a new analysis SHA', async () => {
   const valid = alertPR(33, shaA, { number: 57, head: { ...alertPR(33, shaA).head, sha: shaB } });
   const cases = [
     { pr: { ...valid, draft: false }, reason: /marked ready/ },
@@ -437,7 +524,8 @@ test('prepare records explicit blocked reasons for tracked PRs that become inval
     const previousFetch = globalThis.fetch;
     const previousEnv = { ...process.env };
     const key = `33@${shaA}`;
-    let ledger = { version: 1, alerts: { [key]: { status: 'pending_pr', attempts: 1, pull_request: 57 } }, updated_at: null };
+    const mainSha = pr.draft === false ? shaB : shaA;
+    let ledger = { version: 1, alerts: { [key]: { status: 'verified', attempts: 1, pull_request: 57, analyzed_sha: shaA, verified_head_sha: shaA } }, updated_at: null };
     globalThis.fetch = async (url, options = {}) => {
       const path = new URL(url).pathname;
       if (path.endsWith('/contents/ledger.json') && options.method === 'PUT') {
@@ -445,7 +533,7 @@ test('prepare records explicit blocked reasons for tracked PRs that become inval
         return Response.json({ content: { sha: 'next-ledger-sha' } });
       }
       if (path.endsWith('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
-      if (path.endsWith('/code-scanning/alerts')) return Response.json([{ number: 33, state: 'open', most_recent_instance: { commit_sha: shaA } }]);
+      if (path.endsWith('/code-scanning/alerts')) return Response.json([{ number: 33, state: 'open', most_recent_instance: { commit_sha: mainSha } }]);
       if (path.endsWith('/pulls')) return Response.json([pr]);
       throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
     };
@@ -457,6 +545,9 @@ test('prepare records explicit blocked reasons for tracked PRs that become inval
       await main('prepare');
       assert.equal(ledger.alerts[key].status, 'blocked');
       assert.match(ledger.alerts[key].evidence, reason);
+      assert.equal(ledger.alerts[key].analyzed_sha, undefined);
+      assert.equal(ledger.alerts[key].verified_head_sha, undefined);
+      if (mainSha !== shaA) assert.equal(ledger.alerts[`33@${mainSha}`], undefined);
       assert.match(await readFile(outputPath, 'utf8'), /has_work=false/);
     } finally {
       globalThis.fetch = previousFetch;

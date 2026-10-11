@@ -18,9 +18,9 @@ function retryResult(expected, evidence) {
   return { status: 'retry', alert_number: expected.number, analysis_sha: expected.analysis_sha, evidence };
 }
 
-function pullRequestValidationError(pr, expected, repoFullName) {
+function pullRequestValidationError(pr, expected, repoFullName, { requireDraft = true } = {}) {
   if (pr.state !== 'open') return 'Pull request is not open.';
-  if (!pr.draft) return 'Pull request was marked ready; automatic changes stopped.';
+  if (requireDraft && !pr.draft) return 'Pull request was marked ready; automatic changes stopped.';
   if (pr.base?.ref !== 'main') return 'Pull request no longer targets main.';
   if (pr.head?.repo?.full_name !== repoFullName) return 'Pull request head is not in this repository.';
   const branch = `security/code-scanning/alert-${expected.number}-${expected.analysis_sha}`;
@@ -28,6 +28,11 @@ function pullRequestValidationError(pr, expected, repoFullName) {
   const marker = pr.body?.match(markerPattern);
   if (!marker || Number(marker[1]) !== expected.number || marker[2] !== expected.analysis_sha) return 'Pull request marker does not match the alert and analysis SHA.';
   return null;
+}
+
+function withoutVerification(entry) {
+  const { analyzed_sha, verified_head_sha, ...remaining } = entry;
+  return remaining;
 }
 
 export function selectAlert(alerts, ledger, openPRs, repoFullName) {
@@ -38,8 +43,12 @@ export function selectAlert(alerts, ledger, openPRs, repoFullName) {
     const wasHumanClosed = Object.entries(ledger.alerts ?? {}).some(([historyKey, history]) => historyKey.startsWith(`${alert.number}@`) && history.human_closed === true);
     const activePR = openPRs.some((pr) => {
       const marker = pr.body?.match(markerPattern);
-      return marker && Number(marker[1]) === alert.number
-        && pullRequestValidationError(pr, { number: alert.number, analysis_sha: marker[2] }, repoFullName) === null;
+      if (!marker || Number(marker[1]) !== alert.number) return false;
+      const expected = { number: alert.number, analysis_sha: marker[2] };
+      if (pullRequestValidationError(pr, expected, repoFullName) === null) return true;
+      const isTracked = Object.entries(ledger.alerts ?? {}).some(([historyKey, history]) =>
+        historyKey === `${marker[1]}@${marker[2]}` && history.pull_request === pr.number);
+      return isTracked && pullRequestValidationError(pr, expected, repoFullName, { requireDraft: false }) === null;
     });
     return key.endsWith('@') === false && !wasHumanClosed && !activePR && (!record || retryable);
   });
@@ -273,7 +282,7 @@ async function prepare() {
     if (pr.state === 'closed') {
       const merged = Boolean(pr.merged || pr.merged_at);
       ledger.alerts[key] = {
-        ...entry,
+        ...withoutVerification(entry),
         status: merged ? 'merged' : 'blocked',
         human_closed: !merged,
         evidence: merged ? `PR #${pr.number} was merged outside the agent loop.` : `PR #${pr.number} was closed without merging; the human closure was respected and the alert was not recreated.`,
@@ -282,13 +291,13 @@ async function prepare() {
       changed = true;
       continue;
     }
-    if (!['pending_pr', 'followup_retrying', 'processing_followup'].includes(entry.status)) continue;
+    if (!['pending_pr', 'followup_retrying', 'processing_followup', 'verified'].includes(entry.status)) continue;
     const match = key.match(/^(\d+)@([a-f0-9]{40})$/i);
     const validationError = match
       ? pullRequestValidationError(pr, { number: Number(match[1]), analysis_sha: match[2] }, `${ctx.owner}/${ctx.repo}`)
       : 'Ledger entry does not contain a valid alert and analysis SHA.';
     if (validationError) {
-      ledger.alerts[key] = { ...entry, status: 'blocked', evidence: `Tracked PR #${pr.number} is no longer valid: ${validationError}`, updated_at: new Date().toISOString() };
+      ledger.alerts[key] = { ...withoutVerification(entry), status: 'blocked', evidence: `Tracked PR #${pr.number} is no longer valid: ${validationError}`, updated_at: new Date().toISOString() };
       changed = true;
     }
   }
@@ -312,10 +321,8 @@ async function prepare() {
       entry.updated_at = new Date().toISOString();
       changed = true;
     }
-    if (!entry || !['pending_pr', 'followup_retrying', 'processing_followup'].includes(entry.status) || entry.pull_request !== pr.number) continue;
+    if (!entry || !['pending_pr', 'followup_retrying', 'processing_followup', 'verified'].includes(entry.status) || entry.pull_request !== pr.number) continue;
     const sameReservation = entry.status === 'processing_followup' && entry.followup_sha === pr.head.sha;
-    const alreadyHandled = entry.last_followup_sha === pr.head.sha && entry.status !== 'followup_retrying' && !sameReservation;
-    if (alreadyHandled) continue;
     const checkRuns = await listCheckRuns(ctx, pr.head.sha);
     const statuses = await request(ctx, `/repos/${ctx.owner}/${ctx.repo}/commits/${pr.head.sha}/status`);
     const prRef = `refs/pull/${pr.number}/merge`;
@@ -332,15 +339,28 @@ async function prepare() {
       continue;
     }
     if (evaluation.disposition === 'pending') {
-      if (sameReservation && (entry.attempts ?? 0) >= maxAlertAttempts) {
-        ledger.alerts[key] = { ...entry, status: 'pending_pr', evidence: 'The reserved follow-up ended before current checks were available; the PR remains under scheduled evaluation.', updated_at: new Date().toISOString() };
+      if (entry.status === 'verified') {
+        ledger.alerts[key] = { ...withoutVerification(entry), status: 'pending_pr', evidence: 'Current CI or CodeQL results are incomplete; scheduled evaluation will continue.', updated_at: new Date().toISOString() };
+        changed = true;
+      } else if (sameReservation && (entry.attempts ?? 0) >= maxAlertAttempts) {
+        ledger.alerts[key] = { ...withoutVerification(entry), status: 'pending_pr', evidence: 'The reserved follow-up ended before current checks were available; the PR remains under scheduled evaluation.', updated_at: new Date().toISOString() };
         changed = true;
       }
       continue;
     }
+    if (entry.last_followup_sha === pr.head.sha && entry.status !== 'followup_retrying') {
+      ledger.alerts[key] = {
+        ...withoutVerification(entry),
+        status: 'blocked',
+        evidence: `CI or CodeQL still fails on ${pr.head.sha} after an agent attempt on the same PR head.`,
+        updated_at: new Date().toISOString(),
+      };
+      changed = true;
+      continue;
+    }
     const attempts = (entry.attempts ?? 0) + 1;
     if (attempts > maxAlertAttempts) {
-      ledger.alerts[key] = { ...entry, status: 'blocked', evidence: `CI or CodeQL still fails after the follow-up limit on ${pr.head.sha}.`, updated_at: new Date().toISOString() };
+      ledger.alerts[key] = { ...withoutVerification(entry), status: 'blocked', evidence: `CI or CodeQL still fails after the follow-up limit on ${pr.head.sha}.`, updated_at: new Date().toISOString() };
       changed = true;
       continue;
     }
@@ -351,7 +371,7 @@ async function prepare() {
     process.env.PR_URL = pr.html_url;
     process.env.PR_NUMBER = String(pr.number);
     await writePrompt(alert, expected.analysis_sha, promptPath, 'followup');
-    ledger.alerts[key] = { ...entry, status: 'processing_followup', followup_sha: pr.head.sha, attempts, updated_at: new Date().toISOString() };
+    ledger.alerts[key] = { ...withoutVerification(entry), status: 'processing_followup', followup_sha: pr.head.sha, attempts, updated_at: new Date().toISOString() };
     ledger.updated_at = new Date().toISOString();
     await writeLedger(ctx, ledger, loaded.sha);
     await setOutput('has_work', 'true');
