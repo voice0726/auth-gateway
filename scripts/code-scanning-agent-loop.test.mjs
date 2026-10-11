@@ -655,6 +655,7 @@ test('prepare recovers a validated PR created before an interrupted initial resu
     }
     if (path.endsWith('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
     if (path.endsWith('/code-scanning/alerts')) return Response.json([{ number: 24, state: 'open', most_recent_instance: { commit_sha: shaA } }]);
+    if (path.endsWith('/code-scanning/alerts/24')) return Response.json({ number: 24, state: 'open' });
     if (path.endsWith('/pulls')) return Response.json([pr]);
     if (path.endsWith('/check-runs')) return Response.json({ check_runs: [{ id: 2, name: 'test', status: 'completed', conclusion: 'success' }] });
     if (path.endsWith('/status')) return Response.json({ state: 'success', total_count: 1, statuses: [{ id: 4, context: 'test', state: 'success' }] });
@@ -673,6 +674,62 @@ test('prepare recovers a validated PR created before an interrupted initial resu
     for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
     Object.assign(process.env, previousEnv);
     await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('prepare records terminal alert state for blocked and recovered PR entries', async () => {
+  for (const { entryStatus, alertState } of [
+    { entryStatus: 'blocked', alertState: 'fixed' },
+    { entryStatus: 'blocked', alertState: 'dismissed' },
+    { entryStatus: 'recovered', alertState: 'fixed' },
+    { entryStatus: 'recovered', alertState: 'dismissed' },
+  ]) {
+    const temp = await mkdtemp(join(tmpdir(), 'code-scanning-terminal-pr-'));
+    const outputPath = join(temp, 'output');
+    const previousFetch = globalThis.fetch;
+    const previousEnv = { ...process.env };
+    const key = `25@${shaA}`;
+    let ledger = {
+      version: 1,
+      alerts: { [key]: entryStatus === 'blocked' ? { status: 'blocked', attempts: 2, pull_request: 47 } : { status: 'processing', attempts: 1 } },
+      updated_at: null,
+    };
+    const pr = {
+      number: 47, state: 'open', draft: true, base: { ref: 'main' },
+      head: { ref: `security/code-scanning/alert-25-${shaA}`, sha: shaB, repo: { full_name: 'example/repo' } },
+      body: `<!-- code-scanning-alert:25 analysis:${shaA} -->`,
+    };
+    const calls = [];
+    globalThis.fetch = async (url, options = {}) => {
+      const path = new URL(url).pathname;
+      calls.push(path);
+      if (path.endsWith('/contents/ledger.json') && options.method === 'PUT') {
+        ledger = JSON.parse(Buffer.from(JSON.parse(options.body).content, 'base64').toString('utf8'));
+        return Response.json({ content: { sha: 'next-ledger-sha' } });
+      }
+      if (path.endsWith('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
+      if (path.endsWith('/code-scanning/alerts/25')) return Response.json({ number: 25, state: alertState });
+      if (path.endsWith('/code-scanning/alerts')) return Response.json([]);
+      if (path.endsWith('/pulls')) return Response.json([pr]);
+      throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
+    };
+    Object.assign(process.env, {
+      GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+      GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath, REQUESTED_MODE: 'scan',
+    });
+    try {
+      await main('prepare');
+      assert.equal(ledger.alerts[key].status, alertState, `${entryStatus} ${alertState}`);
+      assert.equal(ledger.alerts[key].alert_state, alertState, `${entryStatus} ${alertState}`);
+      assert.equal(calls.some((path) => path.endsWith('/check-runs')), false, `${entryStatus} ${alertState}`);
+      assert.equal(calls.some((path) => path.endsWith('/instances')), false, `${entryStatus} ${alertState}`);
+      assert.match(await readFile(outputPath, 'utf8'), /has_work=false/, `${entryStatus} ${alertState}`);
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+      Object.assign(process.env, previousEnv);
+      await rm(temp, { recursive: true, force: true });
+    }
   }
 });
 

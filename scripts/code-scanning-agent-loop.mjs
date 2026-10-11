@@ -315,6 +315,22 @@ async function prepare() {
       changed = true;
       continue;
     }
+    if (entry.status === 'blocked') {
+      const alertNumber = Number(key.match(/^(\d+)@/)?.[1]);
+      if (!Number.isSafeInteger(alertNumber) || alertNumber < 1) continue;
+      const currentAlert = await getAlert(ctx, alertNumber);
+      if (currentAlert.state === 'fixed' || currentAlert.state === 'dismissed') {
+        ledger.alerts[key] = {
+          ...withoutVerification(entry),
+          status: currentAlert.state,
+          alert_state: currentAlert.state,
+          evidence: `Code scanning alert state is ${currentAlert.state}; the tracked PR will not receive further follow-up.`,
+          updated_at: new Date().toISOString(),
+        };
+        changed = true;
+      }
+      continue;
+    }
     if (!['pending_pr', 'followup_retrying', 'processing_followup', 'verified'].includes(entry.status)) continue;
     const match = key.match(/^(\d+)@([a-f0-9]{40})$/i);
     const validationError = match
@@ -379,6 +395,23 @@ async function prepare() {
       entry.evidence = 'Recovered a validated alert PR after the agent result was interrupted.';
       entry.updated_at = new Date().toISOString();
       changed = true;
+      const currentAlert = await getAlert(ctx, Number(marker[1]));
+      if (currentAlert.state === 'fixed' || currentAlert.state === 'dismissed') {
+        ledger.alerts[key] = {
+          ...withoutVerification(entry),
+          status: currentAlert.state,
+          alert_state: currentAlert.state,
+          evidence: `Code scanning alert state is ${currentAlert.state}; the recovered PR will not receive further follow-up.`,
+          updated_at: new Date().toISOString(),
+        };
+        continue;
+      }
+      if (currentAlert.state !== 'open') {
+        entry.alert_state = currentAlert.state ?? 'unknown';
+        entry.evidence = `Recovered alert state is ${entry.alert_state}; scheduled evaluation is paused until the state is known.`;
+        pausedAlertPRs.add(pr.number);
+        continue;
+      }
     }
     if (!entry || !['pending_pr', 'followup_retrying', 'processing_followup', 'verified'].includes(entry.status) || entry.pull_request !== pr.number) continue;
     const sameReservation = entry.status === 'processing_followup' && entry.followup_sha === pr.head.sha;
