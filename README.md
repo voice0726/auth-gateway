@@ -106,6 +106,8 @@ PostgreSQL統合テストには既存環境から分離した検証用インス�
 
 alert番号と解析commit SHAごとの履歴は `automation/code-scanning-ledger` branchに保存します。初回調査と同じPRでの修正を合わせ、最大2回実行します。PRの `test` check成功を確認します。mainでopenの解析contextごとに、PR instanceが `fixed` であることを確認します。instance解析SHAは現在のhead SHAまたはmerge SHAと一致する必要があります。条件を満たすalertは「修正検証済み（verified）」として記録します。verifiedのPRも毎回再評価します。結果未到着ならpending_prに戻します。チェック未完了やCodeQL解析未到着は試行を消費しません。次回scheduleで再評価します。
 
+追跡中alertがmainのopen一覧に無い場合、個別APIで状態を確認します。APIが `fixed` か `dismissed` なら、その履歴を終端化します。`instances`の状態や並び順から、alert全体の状態や最新解析を推定しません。API失敗時は履歴を更新せず、処理を失敗させます。
+
 finalizeは予約IDが一致する結果だけを反映します。古いworkflowの再実行結果は無視します。
 
 ledgerが追跡するPRの未merge閉鎖は、アラート番号単位で停止を記録します。mainの解析SHAが変わっても再作成しません。ready化した追跡中のopen PRがある間は、同じalertの新PR作成を抑止します。merge済みならmergedとして記録します。

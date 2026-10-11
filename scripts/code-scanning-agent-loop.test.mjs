@@ -318,6 +318,127 @@ test('scheduled prepare verifies an open main alert from a current fixed PR inst
   }
 });
 
+test('prepare reconciles tracked PRs when the alert is absent from main open alerts', async () => {
+  const cases = [
+    { name: 'dismissed alert with an open instance', state: 'dismissed', expected: 'dismissed', mainOpen: false },
+    { name: 'fixed alert', state: 'fixed', expected: 'fixed', mainOpen: false },
+    { name: 'alert still open', state: 'open', expected: 'verified', mainOpen: false },
+    { name: 'unknown alert state', state: 'in_progress', expected: 'pending_pr', mainOpen: false },
+    { name: 'open alert remains listed', state: null, expected: 'verified', mainOpen: true },
+  ];
+  for (const scenario of cases) {
+    const temp = await mkdtemp(join(tmpdir(), 'code-scanning-alert-state-'));
+    const outputPath = join(temp, 'output');
+    const previousFetch = globalThis.fetch;
+    const previousEnv = { ...process.env };
+    const key = `80@${shaA}`;
+    let ledger = { version: 1, alerts: { [key]: { status: 'verified', attempts: 1, pull_request: 80, analyzed_sha: shaA, verified_head_sha: shaA } }, updated_at: null };
+    const pr = {
+      number: 80, state: 'open', draft: true, base: { ref: 'main' },
+      head: { ref: `security/code-scanning/alert-80-${shaA}`, sha: shaA, repo: { full_name: 'example/repo' } },
+      merge_commit_sha: shaB, html_url: 'https://github.test/example/repo/pull/80',
+      body: `<!-- code-scanning-alert:80 analysis:${shaA} -->`,
+    };
+    const calls = [];
+    let mainOpen = scenario.mainOpen;
+    globalThis.fetch = async (url, options = {}) => {
+      const parsed = new URL(url);
+      const path = parsed.pathname;
+      calls.push({ path, method: options.method ?? 'GET' });
+      if (path.endsWith('/contents/ledger.json') && options.method === 'PUT') {
+        ledger = JSON.parse(Buffer.from(JSON.parse(options.body).content, 'base64').toString('utf8'));
+        return Response.json({ content: { sha: 'next-ledger-sha' } });
+      }
+      if (path.endsWith('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
+      if (path.endsWith('/code-scanning/alerts') && parsed.searchParams.get('state') === 'open') {
+        return Response.json(mainOpen ? [{ number: 80, state: 'open', most_recent_instance: { commit_sha: shaA } }] : []);
+      }
+      if (path.endsWith('/code-scanning/alerts/80')) return Response.json({ number: 80, state: scenario.state });
+      if (path.endsWith('/pulls')) return Response.json([pr]);
+      if (path.endsWith('/check-runs')) return Response.json({ check_runs: [{ id: 1, name: 'test', status: 'completed', conclusion: 'success', app: { id: 7 } }] });
+      if (path.endsWith('/status')) return Response.json({ state: 'success', total_count: 0, statuses: [] });
+      if (path.endsWith('/instances') && parsed.searchParams.get('ref') === 'refs/heads/main') return Response.json([mainInstance]);
+      if (path.endsWith('/instances')) return Response.json([prInstance('fixed', shaA, 'refs/pull/80/merge')]);
+      throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
+    };
+    Object.assign(process.env, {
+      GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+      GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath, REQUESTED_MODE: 'scan', RUNNER_TEMP: temp,
+    });
+    try {
+      await main('prepare');
+      const entry = ledger.alerts[key];
+      assert.equal(entry.status, scenario.expected, scenario.name);
+      assert.equal(entry.attempts, 1, scenario.name);
+      assert.match(await readFile(outputPath, 'utf8'), /has_work=false/, scenario.name);
+      if (['fixed', 'dismissed'].includes(scenario.expected)) {
+        assert.equal(entry.alert_state, scenario.expected, scenario.name);
+        assert.equal(entry.analyzed_sha, undefined, scenario.name);
+        assert.equal(entry.verified_head_sha, undefined, scenario.name);
+        assert.equal(calls.some(({ path }) => path.endsWith('/check-runs')), false, scenario.name);
+        assert.equal(calls.some(({ path }) => path.endsWith('/instances')), false, scenario.name);
+      }
+      if (scenario.expected === 'verified') assert.equal(entry.verified_head_sha, shaA, scenario.name);
+      if (scenario.expected === 'pending_pr') {
+        assert.equal(entry.alert_state, 'in_progress', scenario.name);
+        assert.equal(entry.verified_head_sha, undefined, scenario.name);
+        assert.equal(calls.some(({ path }) => path.endsWith('/check-runs')), false, scenario.name);
+        assert.equal(calls.some(({ path }) => path.endsWith('/instances')), false, scenario.name);
+        mainOpen = true;
+        await main('prepare');
+        assert.equal(ledger.alerts[key].status, 'verified', `${scenario.name} resumes when listed open`);
+        assert.equal(ledger.alerts[key].alert_state, undefined, `${scenario.name} clears the stale state`);
+      }
+      assert.equal(calls.some(({ path }) => path.endsWith('/code-scanning/alerts/80')), !scenario.mainOpen, scenario.name);
+      if (['fixed', 'dismissed'].includes(scenario.expected)) {
+        const stateLookups = calls.filter(({ path }) => path.endsWith('/code-scanning/alerts/80')).length;
+        await main('prepare');
+        assert.equal(ledger.alerts[key].status, scenario.expected, scenario.name);
+        assert.equal(calls.filter(({ path }) => path.endsWith('/code-scanning/alerts/80')).length, stateLookups, scenario.name);
+        assert.equal(calls.some(({ path }) => path.endsWith('/check-runs')), false, scenario.name);
+      }
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+      Object.assign(process.env, previousEnv);
+      await rm(temp, { recursive: true, force: true });
+    }
+  }
+});
+
+test('prepare propagates an alert state lookup error without marking the alert terminal', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'code-scanning-alert-state-error-'));
+  const outputPath = join(temp, 'output');
+  const previousFetch = globalThis.fetch;
+  const previousEnv = { ...process.env };
+  const key = `81@${shaA}`;
+  const ledger = { version: 1, alerts: { [key]: { status: 'pending_pr', attempts: 1, pull_request: 81 } }, updated_at: null };
+  const pr = alertPR(81, shaA, { number: 81, head: { ...alertPR(81, shaA).head, sha: shaB } });
+  globalThis.fetch = async (url, options = {}) => {
+    const parsed = new URL(url);
+    const path = parsed.pathname;
+    if (path.endsWith('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
+    if (path.endsWith('/code-scanning/alerts') && parsed.searchParams.get('state') === 'open') return Response.json([]);
+    if (path.endsWith('/code-scanning/alerts/81')) return new Response('not found', { status: 404 });
+    if (path.endsWith('/pulls')) return Response.json([pr]);
+    throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
+  };
+  Object.assign(process.env, {
+    GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+    GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath, REQUESTED_MODE: 'scan', RUNNER_TEMP: temp,
+  });
+  try {
+    await assert.rejects(main('prepare'), /GitHub API GET .*code-scanning\/alerts\/81: 404/);
+    assert.equal(ledger.alerts[key].status, 'pending_pr');
+    assert.equal(ledger.alerts[key].alert_state, undefined);
+  } finally {
+    globalThis.fetch = previousFetch;
+    for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+    Object.assign(process.env, previousEnv);
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('verified PRs are reevaluated and stale verification metadata is cleared on downgrade', async () => {
   const cases = [
     { name: 'new head pending', headSha: shaB, attempts: 1, checkRuns: [{ id: 1, name: 'test', status: 'completed', conclusion: 'success', app: { id: 7 } }], prInstances: [prInstance('fixed', shaA, 'refs/pull/64/merge')], expected: 'pending_pr' },

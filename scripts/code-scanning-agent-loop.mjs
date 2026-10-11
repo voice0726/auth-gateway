@@ -235,6 +235,10 @@ async function getOpenAlerts(ctx, ref = 'refs/heads/main') {
   return listPages(ctx, `/repos/${ctx.owner}/${ctx.repo}/code-scanning/alerts?state=open&ref=${encodeURIComponent(ref)}`);
 }
 
+async function getAlert(ctx, alertNumber) {
+  return request(ctx, `/repos/${ctx.owner}/${ctx.repo}/code-scanning/alerts/${alertNumber}`);
+}
+
 async function getAlertInstances(ctx, alertNumber, ref) {
   const instances = await listPages(ctx, `/repos/${ctx.owner}/${ctx.repo}/code-scanning/alerts/${alertNumber}/instances?ref=${encodeURIComponent(ref)}`);
   return instances.filter((instance) => instance.ref === ref);
@@ -286,6 +290,7 @@ async function prepare() {
   const requestedPR = Number(process.env.PR_NUMBER || '0');
   let changed = false;
   const trackedPRs = new Map();
+  const pausedAlertPRs = new Set();
   for (const [key, entry] of Object.entries(ledger.alerts ?? {})) {
     if (!entry.pull_request || entry.status === 'merged' || entry.human_closed === true) continue;
     trackedPRs.set(entry.pull_request, key);
@@ -314,10 +319,45 @@ async function prepare() {
     if (validationError) {
       ledger.alerts[key] = { ...withoutVerification(entry), status: 'blocked', evidence: `Tracked PR #${pr.number} is no longer valid: ${validationError}`, updated_at: new Date().toISOString() };
       changed = true;
+      continue;
+    }
+    const alertNumber = Number(match[1]);
+    const alertIsListedOpen = alerts.some((alert) => alert.number === alertNumber);
+    if (!alertIsListedOpen) {
+      const currentAlert = await getAlert(ctx, alertNumber);
+      if (currentAlert.state === 'fixed' || currentAlert.state === 'dismissed') {
+        ledger.alerts[key] = {
+          ...withoutVerification(entry),
+          status: currentAlert.state,
+          alert_state: currentAlert.state,
+          evidence: `Code scanning alert state is ${currentAlert.state}; the tracked PR will not receive further follow-up.`,
+          updated_at: new Date().toISOString(),
+        };
+        changed = true;
+        continue;
+      }
+      if (currentAlert.state !== 'open') {
+        ledger.alerts[key] = {
+          ...withoutVerification(entry),
+          status: 'pending_pr',
+          alert_state: currentAlert.state ?? 'unknown',
+          evidence: `Alert is absent from the open list and its current state is ${currentAlert.state ?? 'unknown'}; scheduled evaluation is paused until the state is known.`,
+          updated_at: new Date().toISOString(),
+        };
+        pausedAlertPRs.add(pr.number);
+        changed = true;
+        continue;
+      }
+    }
+    if (Object.hasOwn(entry, 'alert_state')) {
+      delete entry.alert_state;
+      entry.evidence = 'Alert state is open; tracked PR checks are being evaluated.';
+      changed = true;
     }
   }
   const pendingPulls = mode === 'followup' ? pulls.filter((pr) => pr.number === requestedPR) : pulls;
   for (const pr of pendingPulls) {
+    if (pausedAlertPRs.has(pr.number)) continue;
     const marker = pr.body?.match(markerPattern);
     if (!marker) continue;
     const key = `${marker[1]}@${marker[2]}`;
