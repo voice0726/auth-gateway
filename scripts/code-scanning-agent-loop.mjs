@@ -232,7 +232,7 @@ async function writeLedger(ctx, ledger, sha) {
 }
 
 async function getOpenAlerts(ctx, ref = 'refs/heads/main') {
-  return listPages(ctx, `/repos/${ctx.owner}/${ctx.repo}/code-scanning/alerts?state=open&ref=${encodeURIComponent(ref)}`);
+  return listPages(ctx, `/repos/${ctx.owner}/${ctx.repo}/code-scanning/alerts?state=open&ref=${encodeURIComponent(ref)}&tool_name=CodeQL`);
 }
 
 async function getAlert(ctx, alertNumber) {

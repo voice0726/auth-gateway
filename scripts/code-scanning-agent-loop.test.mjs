@@ -234,11 +234,22 @@ test('prepare persists a processing reservation before handing off an alert', as
   const previousFetch = globalThis.fetch;
   const previousEnv = { ...process.env };
   let ledgerBody;
-  const alertFixture = { number: 12, html_url: 'https://github.test/example/repo/security/code-scanning/12', rule: { id: 'sample/rule', severity: 'warning' }, most_recent_instance: { commit_sha: shaA, message: { text: 'fixture alert' }, location: { path: 'auth/session.go', start_line: 10 } } };
+  const alertFixture = { number: 12, tool: { name: 'CodeQL' }, html_url: 'https://github.test/example/repo/security/code-scanning/12', rule: { id: 'sample/rule', severity: 'warning' }, most_recent_instance: { commit_sha: shaA, message: { text: 'fixture alert' }, location: { path: 'auth/session.go', start_line: 10 } } };
   globalThis.fetch = async (url, options = {}) => {
-    const path = new URL(url).pathname;
+    const parsed = new URL(url);
+    const path = parsed.pathname;
     if (path.endsWith('/contents/ledger.json') && options.method !== 'PUT') return new Response('missing', { status: 404 });
-    if (path.endsWith('/code-scanning/alerts')) return Response.json([alertFixture]);
+    if (path.endsWith('/code-scanning/alerts')) {
+      assert.equal(parsed.searchParams.get('state'), 'open');
+      assert.equal(parsed.searchParams.get('ref'), 'refs/heads/main');
+      assert.equal(parsed.searchParams.get('tool_name'), 'CodeQL');
+      const alerts = [
+        { number: 11, tool: { name: 'Semgrep' }, most_recent_instance: { commit_sha: shaB } },
+        alertFixture,
+      ];
+      const toolName = parsed.searchParams.get('tool_name');
+      return Response.json(toolName ? alerts.filter((alert) => alert.tool?.name === toolName) : alerts);
+    }
     if (path.endsWith('/pulls')) return Response.json([]);
     if (path.endsWith('/git/ref/heads/main')) return Response.json({ object: { sha: shaB } });
     if (path.endsWith('/git/refs')) return Response.json({ ref: 'refs/heads/automation/code-scanning-ledger' }, { status: 201 });
