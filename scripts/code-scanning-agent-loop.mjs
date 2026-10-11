@@ -592,7 +592,7 @@ async function finalize() {
       const pr = await verifyPullRequest(ctx, result, expected);
       entry = { status: 'pending_pr', attempts: expected.attempt, evidence: result.evidence, pull_request: pr.number, branch: pr.head.ref, head_sha: pr.head.sha, updated_at: new Date().toISOString() };
     } catch (error) {
-      entry = { status: 'blocked', evidence: `PR validation failed: ${error.message}`, updated_at: new Date().toISOString() };
+      entry = { status: 'blocked', attempts: expected.attempt, evidence: `PR validation failed: ${error.message}`, updated_at: new Date().toISOString() };
     }
   } else if (!entry) {
     entry = { status: result.status, attempts: expected.attempt, evidence: result.evidence, updated_at: new Date().toISOString() };

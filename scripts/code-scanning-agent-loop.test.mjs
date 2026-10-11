@@ -1087,6 +1087,44 @@ test('attempt two recovers a matching PR when the initial agent output is empty'
   }
 });
 
+test('finalize preserves the reserved attempt when a vulnerability PR fails validation', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'code-scanning-invalid-result-pr-'));
+  const outputPath = join(temp, 'output');
+  const previousFetch = globalThis.fetch;
+  const previousEnv = { ...process.env };
+  const key = `27@${shaA}`;
+  let ledger = { version: 1, alerts: { [key]: { status: 'processing', attempts: 2, reservation_id: reservationA } }, updated_at: null };
+  const invalidPR = alertPR(27, shaA, { number: 50, head: { ...alertPR(27, shaA).head, ref: 'feature/wrong-branch' } });
+  globalThis.fetch = async (url, options = {}) => {
+    if (url.includes('/contents/ledger.json') && options.method === 'PUT') {
+      ledger = JSON.parse(Buffer.from(JSON.parse(options.body).content, 'base64').toString('utf8'));
+      return Response.json({ content: { sha: 'next-ledger-sha' } });
+    }
+    if (url.includes('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
+    if (url.endsWith('/pulls/50')) return Response.json(invalidPR);
+    if (url.includes('/actions/workflows/code-scanning-agent-loop.yml/dispatches')) return new Response(null, { status: 204 });
+    throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
+  };
+  Object.assign(process.env, {
+    GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+    GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath,
+    EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 27, analysis_sha: shaA, attempt: 2, reservation_id: reservationA })).toString('base64'),
+    AGENT_RESULT_B64: Buffer.from(JSON.stringify({ status: 'vulnerability', alert_number: 27, analysis_sha: shaA, evidence: 'Vulnerability found.', pull_request: 50 })).toString('base64'),
+    TASK_MODE: 'scan',
+  });
+  try {
+    await main('finalize');
+    assert.equal(ledger.alerts[key].status, 'blocked');
+    assert.equal(ledger.alerts[key].attempts, 2);
+    assert.match(ledger.alerts[key].evidence, /PR validation failed/);
+  } finally {
+    globalThis.fetch = previousFetch;
+    for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+    Object.assign(process.env, previousEnv);
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test('retry evidence with newlines and CR cannot inject GitHub output keys', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'code-scanning-output-injection-'));
   const outputPath = join(temp, 'output');
