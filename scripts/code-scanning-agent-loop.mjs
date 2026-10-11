@@ -2,7 +2,7 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { appendFile } from 'node:fs/promises';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 const apiVersion = '2022-11-28';
 const ledgerBranch = 'automation/code-scanning-ledger';
@@ -33,6 +33,21 @@ function pullRequestValidationError(pr, expected, repoFullName, { requireDraft =
 function withoutVerification(entry) {
   const { analyzed_sha, verified_head_sha, ...remaining } = entry;
   return remaining;
+}
+
+function hasReservation(entry, expected, status) {
+  return entry?.status === status
+    && Number.isInteger(expected.attempt)
+    && entry.attempts === expected.attempt
+    && typeof expected.reservation_id === 'string'
+    && expected.reservation_id.length > 0
+    && entry.reservation_id === expected.reservation_id;
+}
+
+async function ignoreStaleResult(ledger, expected) {
+  await setOutput('retry', 'false');
+  await setOutput('summary', 'Ignored a stale or already processed agent result.');
+  await writeSummary(ledger, expected);
 }
 
 export function selectAlert(alerts, ledger, openPRs, repoFullName) {
@@ -364,14 +379,18 @@ async function prepare() {
       changed = true;
       continue;
     }
-    const expected = { number: Number(marker[1]), analysis_sha: marker[2] };
+    const reservationId = randomUUID();
+    const expected = {
+      number: Number(marker[1]), analysis_sha: marker[2], attempt: attempts,
+      reservation_id: reservationId, pr_number: pr.number, pr_head_sha: pr.head.sha,
+    };
     const promptPath = `${process.env.RUNNER_TEMP ?? '/tmp'}/code-scanning-followup-${pr.number}.md`;
     const alert = { number: expected.number, rule: {}, most_recent_instance: { message: { text: `Follow-up reason: ${evaluation.reason}. PR instance state: ${instance?.state ?? 'analysis not available'}. CI test: ${checkRuns.find((check) => check.name === 'test')?.conclusion ?? 'not available'}. Current PR head: ${pr.head.sha}.` }, location: instance?.location ?? {} } };
     process.env.PR_HEAD_SHA = pr.head.sha;
     process.env.PR_URL = pr.html_url;
     process.env.PR_NUMBER = String(pr.number);
     await writePrompt(alert, expected.analysis_sha, promptPath, 'followup');
-    ledger.alerts[key] = { ...withoutVerification(entry), status: 'processing_followup', followup_sha: pr.head.sha, attempts, updated_at: new Date().toISOString() };
+    ledger.alerts[key] = { ...withoutVerification(entry), status: 'processing_followup', followup_sha: pr.head.sha, attempts, reservation_id: reservationId, updated_at: new Date().toISOString() };
     ledger.updated_at = new Date().toISOString();
     await writeLedger(ctx, ledger, loaded.sha);
     await setOutput('has_work', 'true');
@@ -414,8 +433,9 @@ async function prepare() {
   const analysisSha = target.most_recent_instance?.commit_sha;
   const key = `${target.number}@${analysisSha}`;
   const attempt = (ledger.alerts[key]?.attempts ?? 0) + 1;
-  const item = { number: target.number, analysis_sha: analysisSha, attempt };
-  ledger.alerts[key] = { status: 'processing', attempts: attempt, evidence: 'Agent attempt reserved before execution.', updated_at: new Date().toISOString() };
+  const reservationId = randomUUID();
+  const item = { number: target.number, analysis_sha: analysisSha, attempt, reservation_id: reservationId };
+  ledger.alerts[key] = { status: 'processing', attempts: attempt, reservation_id: reservationId, evidence: 'Agent attempt reserved before execution.', updated_at: new Date().toISOString() };
   ledger.updated_at = new Date().toISOString();
   await writeLedger(ctx, ledger, loaded.sha);
   const promptPath = `${process.env.RUNNER_TEMP ?? '/tmp'}/code-scanning-alert-${target.number}.md`;
@@ -448,12 +468,18 @@ async function finalize() {
   const ctx = context();
   const expected = JSON.parse(Buffer.from(required('EXPECTED_ALERT'), 'base64').toString('utf8'));
   const { ledger, sha } = await getLedger(ctx);
+  const key = `${expected.number}@${expected.analysis_sha}`;
+  const current = ledger.alerts[key];
+  if (!hasReservation(current, expected, 'processing')) {
+    await ignoreStaleResult(ledger, expected);
+    return;
+  }
   const raw = process.env.AGENT_RESULT_B64 ? Buffer.from(process.env.AGENT_RESULT_B64, 'base64').toString('utf8') : '';
   const result = normalizeResult(raw, expected);
   const attempt = expected.attempt;
   let entry;
   if (result.status === 'retry' && canRetryAlert(attempt)) {
-    ledger.alerts[`${expected.number}@${expected.analysis_sha}`] = { status: 'retrying', attempts: attempt, evidence: result.evidence, updated_at: new Date().toISOString() };
+    ledger.alerts[key] = { status: 'retrying', attempts: attempt, evidence: result.evidence, updated_at: new Date().toISOString() };
     ledger.updated_at = new Date().toISOString();
     await writeLedger(ctx, ledger, sha);
     await setOutput('retry', 'true');
@@ -488,7 +514,7 @@ async function finalize() {
   } else if (!entry) {
     entry = { status: result.status, attempts: expected.attempt, evidence: result.evidence, updated_at: new Date().toISOString() };
   }
-  ledger.alerts[`${expected.number}@${expected.analysis_sha}`] = entry;
+  ledger.alerts[key] = entry;
   ledger.updated_at = new Date().toISOString();
   await writeLedger(ctx, ledger, sha);
   await writeSummary(ledger, expected);
@@ -501,10 +527,22 @@ async function finalizeFollowup() {
   const ctx = context();
   const expected = JSON.parse(Buffer.from(required('EXPECTED_ALERT'), 'base64').toString('utf8'));
   const prNumber = Number(required('PR_NUMBER'));
+  const prHeadSha = required('PR_HEAD_SHA');
+  const attempt = Number(required('FOLLOWUP_ATTEMPT'));
   const { ledger, sha } = await getLedger(ctx);
   const key = `${expected.number}@${expected.analysis_sha}`;
   const entry = ledger.alerts[key];
-  if (!entry || entry.pull_request !== prNumber) throw new Error('Follow-up does not match a pending alert PR.');
+  const environmentMatches = expected.pr_number === prNumber
+    && expected.pr_head_sha === prHeadSha
+    && expected.attempt === attempt;
+  const reservationMatches = environmentMatches
+    && hasReservation(entry, expected, 'processing_followup')
+    && entry.pull_request === prNumber
+    && entry.followup_sha === prHeadSha;
+  if (!reservationMatches) {
+    await ignoreStaleResult(ledger, expected);
+    return;
+  }
   const raw = process.env.AGENT_RESULT_B64 ? Buffer.from(process.env.AGENT_RESULT_B64, 'base64').toString('utf8') : '';
   const result = normalizeResult(raw, expected);
   const pr = await request(ctx, `/repos/${ctx.owner}/${ctx.repo}/pulls/${prNumber}`);
@@ -533,7 +571,6 @@ async function finalizeFollowup() {
     await dispatchNext(ctx);
     return;
   }
-  const attempt = Number(process.env.FOLLOWUP_ATTEMPT ?? '1');
   entry.last_followup_result = result.status;
   entry.attempts = attempt;
   entry.last_followup_sha = process.env.PR_HEAD_SHA;

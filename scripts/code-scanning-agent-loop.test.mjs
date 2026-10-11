@@ -15,6 +15,9 @@ import {
 
 const shaA = 'a'.repeat(40);
 const shaB = 'b'.repeat(40);
+const shaC = 'c'.repeat(40);
+const reservationA = 'fixture-reservation-a';
+const reservationB = 'fixture-reservation-b';
 const mainInstance = { ref: 'refs/heads/main', state: 'open', analysis_key: 'codeql.yml:scan', environment: '{}', category: 'go' };
 
 function prInstance(state, sha = shaA, ref = 'refs/pull/1/merge', context = mainInstance) {
@@ -254,10 +257,13 @@ test('prepare persists a processing reservation before handing off an alert', as
     await main('prepare');
     const outputs = await readFile(outputPath, 'utf8');
     const saved = JSON.parse(Buffer.from(ledgerBody.content, 'base64').toString('utf8'));
+    const expected = JSON.parse(Buffer.from(outputs.match(/^expected=(.+)$/m)[1], 'base64').toString('utf8'));
     assert.match(outputs, /has_work=true/);
-    assert.deepEqual(saved.alerts[`12@${shaA}`], {
-      status: 'processing', attempts: 1, evidence: 'Agent attempt reserved before execution.', updated_at: saved.alerts[`12@${shaA}`].updated_at,
-    });
+    assert.equal(saved.alerts[`12@${shaA}`].status, 'processing');
+    assert.equal(saved.alerts[`12@${shaA}`].attempts, 1);
+    assert.equal(saved.alerts[`12@${shaA}`].reservation_id, expected.reservation_id);
+    assert.match(saved.alerts[`12@${shaA}`].reservation_id, /^[0-9a-f-]{36}$/);
+    assert.equal(expected.attempt, 1);
     assert.match(saved.alerts[`12@${shaA}`].updated_at, /^\d{4}-/);
     await main('cleanup-prompt');
   } finally {
@@ -398,6 +404,8 @@ test('scheduled prepare reserves same-PR repair when CI fails before CodeQL anal
   const key = `23@${shaA}`;
   let savedLedger = { version: 1, alerts: { [key]: { status: 'pending_pr', attempts: 1, pull_request: 45 } }, updated_at: null };
   const prHead = { ref: `security/code-scanning/alert-23-${shaA}`, sha: shaB, repo: { full_name: 'example/repo' } };
+  let currentPRHead = shaB;
+  let dispatches = 0;
   globalThis.fetch = async (url, options = {}) => {
     const parsed = new URL(url);
     const path = parsed.pathname;
@@ -407,11 +415,17 @@ test('scheduled prepare reserves same-PR repair when CI fails before CodeQL anal
     }
     if (path.endsWith('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(savedLedger)).toString('base64'), sha: 'ledger-sha' });
     if (path.endsWith('/code-scanning/alerts') && parsed.searchParams.get('ref') === 'refs/heads/main') return Response.json([{ number: 23, state: 'open', most_recent_instance: { commit_sha: shaA } }]);
-    if (path.endsWith('/pulls')) return Response.json([{ number: 45, state: 'open', draft: true, base: { ref: 'main' }, head: prHead, merge_commit_sha: 'c'.repeat(40), html_url: 'https://github.test/example/repo/pull/45', body: `<!-- code-scanning-alert:23 analysis:${shaA} -->` }]);
+    const currentPR = { number: 45, state: 'open', draft: true, base: { ref: 'main' }, head: { ...prHead, sha: currentPRHead }, merge_commit_sha: shaC, html_url: 'https://github.test/example/repo/pull/45', body: `<!-- code-scanning-alert:23 analysis:${shaA} -->` };
+    if (path.endsWith('/pulls/45')) return Response.json(currentPR);
+    if (path.endsWith('/pulls')) return Response.json([currentPR]);
     if (path.endsWith('/check-runs')) return Response.json({ check_runs: [{ id: 2, name: 'test', status: 'completed', conclusion: 'failure', app: { id: 7 } }] });
     if (path.endsWith('/status')) return Response.json({ state: 'failure', total_count: 1, statuses: [{ id: 3, context: 'test', state: 'failure' }] });
     if (path.endsWith('/instances') && parsed.searchParams.get('ref') === 'refs/heads/main') return Response.json([mainInstance]);
     if (path.endsWith('/instances')) return Response.json([]);
+    if (path.includes('/actions/workflows/code-scanning-agent-loop.yml/dispatches')) {
+      dispatches += 1;
+      return new Response(null, { status: 204 });
+    }
     throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
   };
   Object.assign(process.env, {
@@ -420,10 +434,35 @@ test('scheduled prepare reserves same-PR repair when CI fails before CodeQL anal
   });
   try {
     await main('prepare');
+    let outputs = parseGithubOutput(await readFile(outputPath, 'utf8'));
+    const expected = JSON.parse(Buffer.from(outputs.find(([name]) => name === 'expected')[1], 'base64').toString('utf8'));
     assert.equal(savedLedger.alerts[key].status, 'processing_followup');
     assert.equal(savedLedger.alerts[key].followup_sha, shaB);
     assert.equal(savedLedger.alerts[key].attempts, 2);
-    assert.match(await readFile(outputPath, 'utf8'), /task_mode=followup/);
+    assert.equal(savedLedger.alerts[key].reservation_id, expected.reservation_id);
+    assert.match(expected.reservation_id, /^[0-9a-f-]{36}$/);
+    assert.equal(expected.attempt, 2);
+    assert.equal(expected.pr_number, 45);
+    assert.equal(expected.pr_head_sha, shaB);
+    assert.equal(outputs.find(([name]) => name === 'followup_attempt')[1], '2');
+    assert.equal(outputs.find(([name]) => name === 'pr_number')[1], '45');
+    assert.equal(outputs.find(([name]) => name === 'pr_head_sha')[1], shaB);
+    assert.equal(outputs.find(([name]) => name === 'task_mode')[1], 'followup');
+    process.env.EXPECTED_ALERT = Buffer.from(JSON.stringify(expected)).toString('base64');
+    process.env.AGENT_RESULT = JSON.stringify({ status: 'vulnerability', alert_number: 23, analysis_sha: shaA, evidence: 'Added a regression test.', pull_request: 45 });
+    process.env.TASK_MODE = 'followup';
+    process.env.PR_NUMBER = String(expected.pr_number);
+    process.env.PR_HEAD_SHA = expected.pr_head_sha;
+    process.env.FOLLOWUP_ATTEMPT = String(expected.attempt);
+    await main('normalize');
+    outputs = parseGithubOutput(await readFile(outputPath, 'utf8'));
+    process.env.AGENT_RESULT_B64 = outputs.filter(([name]) => name === 'result_b64').at(-1)[1];
+    currentPRHead = shaC;
+    await main('finalize');
+    assert.equal(savedLedger.alerts[key].status, 'pending_pr');
+    assert.equal(savedLedger.alerts[key].last_followup_sha, shaB);
+    assert.equal(savedLedger.alerts[key].head_sha, shaC);
+    assert.equal(dispatches, 1);
   } finally {
     globalThis.fetch = previousFetch;
     for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
@@ -564,7 +603,10 @@ test('follow-up preserves an advanced PR head when the agent output is empty', a
   const previousFetch = globalThis.fetch;
   const previousEnv = { ...process.env };
   const key = `25@${shaA}`;
-  let ledger = { version: 1, alerts: { [key]: { status: 'processing_followup', attempts: 2, pull_request: 47, followup_sha: shaA } }, updated_at: null };
+  let ledger = { version: 1, alerts: { [key]: { status: 'processing_followup', attempts: 2, reservation_id: reservationA, pull_request: 47, followup_sha: shaA } }, updated_at: null };
+  let writes = 0;
+  let prReads = 0;
+  let dispatches = 0;
   const pr = {
     number: 47, state: 'open', draft: true, base: { ref: 'main' },
     head: { ref: `security/code-scanning/alert-25-${shaA}`, sha: shaB, repo: { full_name: 'example/repo' } },
@@ -572,18 +614,25 @@ test('follow-up preserves an advanced PR head when the agent output is empty', a
   };
   globalThis.fetch = async (url, options = {}) => {
     if (url.includes('/contents/ledger.json') && options.method === 'PUT') {
+      writes += 1;
       ledger = JSON.parse(Buffer.from(JSON.parse(options.body).content, 'base64').toString('utf8'));
       return Response.json({ content: { sha: 'next-ledger-sha' } });
     }
     if (url.includes('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
-    if (url.endsWith('/pulls/47')) return Response.json(pr);
-    if (url.includes('/actions/workflows/code-scanning-agent-loop.yml/dispatches')) return new Response(null, { status: 204 });
+    if (url.endsWith('/pulls/47')) {
+      prReads += 1;
+      return Response.json(pr);
+    }
+    if (url.includes('/actions/workflows/code-scanning-agent-loop.yml/dispatches')) {
+      dispatches += 1;
+      return new Response(null, { status: 204 });
+    }
     throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
   };
   Object.assign(process.env, {
     GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
     GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath,
-    EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 25, analysis_sha: shaA })).toString('base64'),
+    EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 25, analysis_sha: shaA, attempt: 2, reservation_id: reservationA, pr_number: 47, pr_head_sha: shaA })).toString('base64'),
     AGENT_RESULT_B64: '', TASK_MODE: 'followup', PR_NUMBER: '47', PR_HEAD_SHA: shaA,
     FOLLOWUP_ATTEMPT: '2',
   });
@@ -592,6 +641,14 @@ test('follow-up preserves an advanced PR head when the agent output is empty', a
     assert.equal(ledger.alerts[key].status, 'pending_pr');
     assert.equal(ledger.alerts[key].attempts, 2);
     assert.equal(ledger.alerts[key].head_sha, shaB);
+    assert.equal(writes, 1);
+    assert.equal(prReads, 1);
+    assert.equal(dispatches, 1);
+    await main('finalize');
+    assert.equal(ledger.alerts[key].status, 'pending_pr');
+    assert.equal(writes, 1);
+    assert.equal(prReads, 1);
+    assert.equal(dispatches, 1);
   } finally {
     globalThis.fetch = previousFetch;
     for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
@@ -612,7 +669,7 @@ test('follow-up finalization blocks a PR invalidated after prepare and records h
     const previousFetch = globalThis.fetch;
     const previousEnv = { ...process.env };
     const key = `62@${shaA}`;
-    let ledger = { version: 1, alerts: { [key]: { status: 'processing_followup', attempts: 2, pull_request: 62, followup_sha: shaA } }, updated_at: null };
+    let ledger = { version: 1, alerts: { [key]: { status: 'processing_followup', attempts: 2, reservation_id: reservationA, pull_request: 62, followup_sha: shaA } }, updated_at: null };
     globalThis.fetch = async (url, options = {}) => {
       if (url.includes('/contents/ledger.json') && options.method === 'PUT') {
         ledger = JSON.parse(Buffer.from(JSON.parse(options.body).content, 'base64').toString('utf8'));
@@ -626,7 +683,7 @@ test('follow-up finalization blocks a PR invalidated after prepare and records h
     Object.assign(process.env, {
       GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
       GITHUB_API_URL: 'https://api.github.test', GITHUB_STEP_SUMMARY: join(temp, 'summary'),
-      EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 62, analysis_sha: shaA })).toString('base64'),
+      EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 62, analysis_sha: shaA, attempt: 2, reservation_id: reservationA, pr_number: 62, pr_head_sha: shaA })).toString('base64'),
       AGENT_RESULT_B64: '', TASK_MODE: 'followup', PR_NUMBER: '62', PR_HEAD_SHA: shaA,
       FOLLOWUP_ATTEMPT: '2',
     });
@@ -644,13 +701,65 @@ test('follow-up finalization blocks a PR invalidated after prepare and records h
   }
 });
 
+test('stale follow-up results do not fetch PRs, mutate the ledger, or dispatch', async () => {
+  const baseExpected = { number: 80, analysis_sha: shaA, attempt: 2, reservation_id: reservationA, pr_number: 80, pr_head_sha: shaA };
+  const baseEntry = { status: 'processing_followup', attempts: 2, reservation_id: reservationA, pull_request: 80, followup_sha: shaA };
+  const cases = [
+    { name: 'pending entry', entry: { ...baseEntry, status: 'pending_pr' } },
+    { name: 'verified entry', entry: { ...baseEntry, status: 'verified' } },
+    { name: 'reservation replaced', entry: { ...baseEntry, reservation_id: reservationB } },
+    { name: 'reserved head changed', entry: { ...baseEntry, followup_sha: shaB } },
+    { name: 'PR number changed', entry: { ...baseEntry, pull_request: 81 } },
+    { name: 'attempt changed', entry: { ...baseEntry, attempts: 1 } },
+    { name: 'environment PR mismatch', entry: baseEntry, expected: { ...baseExpected, pr_number: 81 } },
+    { name: 'environment head mismatch', entry: baseEntry, prHeadSha: shaB },
+  ];
+  for (const staleCase of cases) {
+    const temp = await mkdtemp(join(tmpdir(), 'code-scanning-stale-followup-'));
+    const outputPath = join(temp, 'output');
+    const previousFetch = globalThis.fetch;
+    const previousEnv = { ...process.env };
+    const key = `80@${shaA}`;
+    const original = { ...staleCase.entry };
+    const ledger = { version: 1, alerts: { [key]: staleCase.entry }, updated_at: null };
+    let ledgerReads = 0;
+    globalThis.fetch = async (url, options = {}) => {
+      if (url.includes('/contents/ledger.json')) {
+        ledgerReads += 1;
+        assert.equal(options.method, undefined, staleCase.name);
+        return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
+      }
+      throw new Error(`Stale ${staleCase.name} result accessed ${options.method ?? 'GET'} ${url}`);
+    };
+    const expected = staleCase.expected ?? baseExpected;
+    Object.assign(process.env, {
+      GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+      GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath,
+      EXPECTED_ALERT: Buffer.from(JSON.stringify(expected)).toString('base64'),
+      AGENT_RESULT_B64: '', TASK_MODE: 'followup', PR_NUMBER: '80',
+      PR_HEAD_SHA: staleCase.prHeadSha ?? shaA, FOLLOWUP_ATTEMPT: '2',
+    });
+    try {
+      await main('finalize');
+      assert.equal(ledgerReads, 1, staleCase.name);
+      assert.deepEqual(ledger.alerts[key], original, staleCase.name);
+      assert.deepEqual(parseGithubOutput(await readFile(outputPath, 'utf8')).filter(([name]) => name === 'retry'), [['retry', 'false']], staleCase.name);
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+      Object.assign(process.env, previousEnv);
+      await rm(temp, { recursive: true, force: true });
+    }
+  }
+});
+
 test('attempt two recovers a matching PR when the initial agent output is empty', async () => {
   const temp = await mkdtemp(join(tmpdir(), 'code-scanning-final-recovery-'));
   const outputPath = join(temp, 'output');
   const previousFetch = globalThis.fetch;
   const previousEnv = { ...process.env };
   const key = `26@${shaA}`;
-  let ledger = { version: 1, alerts: { [key]: { status: 'processing', attempts: 2 } }, updated_at: null };
+  let ledger = { version: 1, alerts: { [key]: { status: 'processing', attempts: 2, reservation_id: reservationA } }, updated_at: null };
   const invalidPR = { number: 49, state: 'open', draft: true, base: { ref: 'main' }, head: { ref: 'security/code-scanning/alert-26-wrong', sha: shaB, repo: { full_name: 'example/repo' } }, body: `<!-- code-scanning-alert:26 analysis:${shaA} -->` };
   const pr = { number: 48, state: 'open', draft: true, base: { ref: 'main' }, head: { ref: `security/code-scanning/alert-26-${shaA}`, sha: shaB, repo: { full_name: 'example/repo' } }, body: `<!-- code-scanning-alert:26 analysis:${shaA} -->` };
   globalThis.fetch = async (url, options = {}) => {
@@ -667,7 +776,7 @@ test('attempt two recovers a matching PR when the initial agent output is empty'
   Object.assign(process.env, {
     GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
     GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath,
-    EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 26, analysis_sha: shaA, attempt: 2 })).toString('base64'),
+    EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 26, analysis_sha: shaA, attempt: 2, reservation_id: reservationA })).toString('base64'),
     AGENT_RESULT_B64: '', TASK_MODE: 'scan',
   });
   try {
@@ -689,7 +798,7 @@ test('retry evidence with newlines and CR cannot inject GitHub output keys', asy
   const previousFetch = globalThis.fetch;
   const previousEnv = { ...process.env };
   const key = `61@${shaA}`;
-  let ledger = { version: 1, alerts: { [key]: { status: 'processing', attempts: 1 } }, updated_at: null };
+  let ledger = { version: 1, alerts: { [key]: { status: 'processing', attempts: 1, reservation_id: reservationA } }, updated_at: null };
   const evidence = 'retry=false\r\nhas_work=true\nsummary=forged';
   globalThis.fetch = async (url, options = {}) => {
     if (url.includes('/contents/ledger.json') && options.method === 'PUT') {
@@ -703,7 +812,7 @@ test('retry evidence with newlines and CR cannot inject GitHub output keys', asy
   Object.assign(process.env, {
     GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
     GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath,
-    EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 61, analysis_sha: shaA, attempt: 1 })).toString('base64'),
+    EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 61, analysis_sha: shaA, attempt: 1, reservation_id: reservationA })).toString('base64'),
     AGENT_RESULT: JSON.stringify({ status: 'retry', alert_number: 61, analysis_sha: shaA, evidence }),
     TASK_MODE: 'scan', ATTEMPT: '1',
   });
@@ -732,7 +841,7 @@ test('an empty Pullfrog output is persisted as retrying or blocked at the attemp
   const outputPath = join(temp, 'output');
   const previousFetch = globalThis.fetch;
   const previousEnv = { ...process.env };
-  let ledger = { version: 1, alerts: { [`14@${shaA}`]: { status: 'processing', attempts: 2 } }, updated_at: null };
+  let ledger = { version: 1, alerts: { [`14@${shaA}`]: { status: 'processing', attempts: 2, reservation_id: reservationA } }, updated_at: null };
   const ledgerSha = 'ledger-file-sha';
   globalThis.fetch = async (url, options = {}) => {
     if (options.method === 'PUT') {
@@ -747,7 +856,7 @@ test('an empty Pullfrog output is persisted as retrying or blocked at the attemp
   Object.assign(process.env, {
     GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
     GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath,
-    EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 14, analysis_sha: shaA, attempt: 2 })).toString('base64'),
+    EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 14, analysis_sha: shaA, attempt: 2, reservation_id: reservationA })).toString('base64'),
     AGENT_RESULT_B64: '', TASK_MODE: 'scan',
   });
   try {
@@ -775,7 +884,7 @@ test('normalized retry evidence survives finalization for empty, invalid, and in
     const previousFetch = globalThis.fetch;
     const previousEnv = { ...process.env };
     const key = `32@${shaA}`;
-    let ledger = { version: 1, alerts: { [key]: { status: 'processing', attempts: 2 } }, updated_at: null };
+    let ledger = { version: 1, alerts: { [key]: { status: 'processing', attempts: 2, reservation_id: reservationA } }, updated_at: null };
     globalThis.fetch = async (url, options = {}) => {
       if (url.includes('/contents/ledger.json') && options.method === 'PUT') {
         ledger = JSON.parse(Buffer.from(JSON.parse(options.body).content, 'base64').toString('utf8'));
@@ -789,7 +898,7 @@ test('normalized retry evidence survives finalization for empty, invalid, and in
     Object.assign(process.env, {
       GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
       GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath,
-      EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 32, analysis_sha: shaA, attempt: 2 })).toString('base64'),
+      EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 32, analysis_sha: shaA, attempt: 2, reservation_id: reservationA })).toString('base64'),
       AGENT_RESULT: raw, TASK_MODE: 'scan',
     });
     try {
@@ -806,5 +915,153 @@ test('normalized retry evidence survives finalization for empty, invalid, and in
       Object.assign(process.env, previousEnv);
       await rm(temp, { recursive: true, force: true });
     }
+  }
+});
+
+test('stale scan finalizers are no-ops and a duplicate finalizer cannot overwrite the first result', async () => {
+  const staleCases = [
+    { name: 'older attempt', entry: { status: 'processing', attempts: 2, reservation_id: reservationB }, expected: { attempt: 1, reservation_id: reservationA } },
+    { name: 'terminal entry', entry: { status: 'verified', attempts: 1, reservation_id: reservationA }, expected: { attempt: 1, reservation_id: reservationA } },
+    { name: 'reservation changed', entry: { status: 'processing', attempts: 1, reservation_id: reservationB }, expected: { attempt: 1, reservation_id: reservationA } },
+    { name: 'reservation missing', entry: { status: 'processing', attempts: 1 }, expected: { attempt: 1, reservation_id: reservationA } },
+  ];
+  for (const staleCase of staleCases) {
+    const temp = await mkdtemp(join(tmpdir(), 'code-scanning-stale-scan-'));
+    const outputPath = join(temp, 'output');
+    const previousFetch = globalThis.fetch;
+    const previousEnv = { ...process.env };
+    const key = `71@${shaA}`;
+    const original = { ...staleCase.entry };
+    const ledger = { version: 1, alerts: { [key]: staleCase.entry }, updated_at: null };
+    let ledgerReads = 0;
+    globalThis.fetch = async (url, options = {}) => {
+      if (url.includes('/contents/ledger.json')) {
+        ledgerReads += 1;
+        assert.equal(options.method, undefined, staleCase.name);
+        return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
+      }
+      throw new Error(`Stale ${staleCase.name} result accessed ${options.method ?? 'GET'} ${url}`);
+    };
+    Object.assign(process.env, {
+      GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+      GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath,
+      EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 71, analysis_sha: shaA, ...staleCase.expected })).toString('base64'),
+      AGENT_RESULT_B64: Buffer.from(JSON.stringify({ status: 'false_positive', alert_number: 71, analysis_sha: shaA, evidence: 'Old result.' })).toString('base64'),
+      TASK_MODE: 'scan',
+    });
+    try {
+      await main('finalize');
+      assert.equal(ledgerReads, 1, staleCase.name);
+      assert.deepEqual(ledger.alerts[key], original, staleCase.name);
+      assert.deepEqual(parseGithubOutput(await readFile(outputPath, 'utf8')).filter(([name]) => name === 'retry'), [['retry', 'false']], staleCase.name);
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+      Object.assign(process.env, previousEnv);
+      await rm(temp, { recursive: true, force: true });
+    }
+  }
+
+  const temp = await mkdtemp(join(tmpdir(), 'code-scanning-duplicate-scan-'));
+  const outputPath = join(temp, 'output');
+  const previousFetch = globalThis.fetch;
+  const previousEnv = { ...process.env };
+  const key = `72@${shaA}`;
+  let ledger = { version: 1, alerts: { [key]: { status: 'processing', attempts: 1, reservation_id: reservationA } }, updated_at: null };
+  let writes = 0;
+  let dispatches = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    if (url.includes('/contents/ledger.json') && options.method === 'PUT') {
+      writes += 1;
+      ledger = JSON.parse(Buffer.from(JSON.parse(options.body).content, 'base64').toString('utf8'));
+      return Response.json({ content: { sha: 'next-ledger-sha' } });
+    }
+    if (url.includes('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
+    if (url.includes('/actions/workflows/code-scanning-agent-loop.yml/dispatches')) {
+      dispatches += 1;
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected duplicate fixture request ${options.method ?? 'GET'} ${url}`);
+  };
+  Object.assign(process.env, {
+    GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+    GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath,
+    EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 72, analysis_sha: shaA, attempt: 1, reservation_id: reservationA })).toString('base64'),
+    AGENT_RESULT_B64: Buffer.from(JSON.stringify({ status: 'false_positive', alert_number: 72, analysis_sha: shaA, evidence: 'Confirmed unreachable.' })).toString('base64'),
+    TASK_MODE: 'scan',
+  });
+  try {
+    await main('finalize');
+    assert.equal(ledger.alerts[key].status, 'false_positive');
+    assert.equal(ledger.alerts[key].reservation_id, undefined);
+    await main('finalize');
+    assert.equal(ledger.alerts[key].status, 'false_positive');
+    assert.equal(writes, 1);
+    assert.equal(dispatches, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+    for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+    Object.assign(process.env, previousEnv);
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('prepare normalize and finalize accept one matching scan reservation', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'code-scanning-reservation-roundtrip-'));
+  const outputPath = join(temp, 'output');
+  const previousFetch = globalThis.fetch;
+  const previousEnv = { ...process.env };
+  const key = `73@${shaA}`;
+  const alertFixture = { number: 73, rule: { id: 'sample/rule' }, most_recent_instance: { commit_sha: shaA, message: { text: 'fixture' } } };
+  let ledger = null;
+  let writes = 0;
+  let dispatches = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    const path = new URL(url).pathname;
+    if (path.endsWith('/contents/ledger.json') && options.method === 'PUT') {
+      writes += 1;
+      ledger = JSON.parse(Buffer.from(JSON.parse(options.body).content, 'base64').toString('utf8'));
+      return Response.json({ content: { sha: 'ledger-sha' } }, { status: 201 });
+    }
+    if (path.endsWith('/contents/ledger.json')) {
+      if (!ledger) return new Response('missing', { status: 404 });
+      return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
+    }
+    if (path.endsWith('/code-scanning/alerts')) return Response.json([alertFixture]);
+    if (path.endsWith('/pulls')) return Response.json([]);
+    if (path.endsWith('/git/ref/heads/main')) return Response.json({ object: { sha: shaB } });
+    if (path.endsWith('/git/refs')) return Response.json({ ref: 'refs/heads/automation/code-scanning-ledger' }, { status: 201 });
+    if (path.includes('/actions/workflows/code-scanning-agent-loop.yml/dispatches')) {
+      dispatches += 1;
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`Unexpected roundtrip fixture request ${options.method ?? 'GET'} ${url}`);
+  };
+  Object.assign(process.env, {
+    GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+    GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath, RUNNER_TEMP: temp,
+    REQUESTED_MODE: 'scan', TASK_MODE: 'scan',
+  });
+  try {
+    await main('prepare');
+    let outputs = parseGithubOutput(await readFile(outputPath, 'utf8'));
+    const expected = JSON.parse(Buffer.from(outputs.find(([name]) => name === 'expected')[1], 'base64').toString('utf8'));
+    assert.equal(ledger.alerts[key].reservation_id, expected.reservation_id);
+    process.env.EXPECTED_ALERT = Buffer.from(JSON.stringify(expected)).toString('base64');
+    process.env.AGENT_RESULT = JSON.stringify({ status: 'false_positive', alert_number: 73, analysis_sha: shaA, evidence: 'Fixture has no reachable input.' });
+    await main('normalize');
+    outputs = parseGithubOutput(await readFile(outputPath, 'utf8'));
+    process.env.AGENT_RESULT_B64 = outputs.filter(([name]) => name === 'result_b64').at(-1)[1];
+    await main('finalize');
+    assert.equal(ledger.alerts[key].status, 'false_positive');
+    assert.equal(ledger.alerts[key].attempts, 1);
+    assert.equal(ledger.alerts[key].reservation_id, undefined);
+    assert.equal(writes, 2);
+    assert.equal(dispatches, 1);
+  } finally {
+    globalThis.fetch = previousFetch;
+    for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+    Object.assign(process.env, previousEnv);
+    await rm(temp, { recursive: true, force: true });
   }
 });
