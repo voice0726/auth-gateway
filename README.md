@@ -104,6 +104,8 @@ PostgreSQL統合テストには既存環境から分離した検証用インス�
 
 [Code scanning agent loop](.github/workflows/code-scanning-agent-loop.yml) は毎時と手動で実行します。mainのopen CodeQL alertを1件ずつ処理します。脆弱性は回帰テスト付きのdraft PRにします。false positiveは根拠を記録し、dismiss判断を人に残します。判断できないalertは理由を記録して停止します。
 
-alert番号と解析commit SHAごとの履歴は `automation/code-scanning-ledger` branchに保存します。初回調査と同じPRでの修正を合わせ、最大2回実行します。PRの `test` check成功を確認します。PRのalert instanceが `fixed` であることを確認します。instance解析SHAが現在のhead SHAまたはmerge SHAと一致することも確認します。条件を満たすalertは「修正検証済み（verified）」として記録します。チェック未完了やCodeQL解析未到着は試行を消費しません。次回scheduleで再評価します。
+alert番号と解析commit SHAごとの履歴は `automation/code-scanning-ledger` branchに保存します。初回調査と同じPRでの修正を合わせ、最大2回実行します。PRの `test` check成功を確認します。mainでopenの解析contextごとに、PR instanceが `fixed` であることを確認します。instance解析SHAは現在のhead SHAまたはmerge SHAと一致する必要があります。条件を満たすalertは「修正検証済み（verified）」として記録します。チェック未完了やCodeQL解析未到着は試行を消費しません。次回scheduleで再評価します。
+
+ledgerが追跡するPRを人が閉じた場合は、自動で作り直しません。未mergeならblocked、merge済みならmergedとして記録します。
 
 workflowの `GITHUB_TOKEN` には Code scanning alerts、Checks、Commit statuses、Pull requestsのread権限が必要です。ContentsとActionsにはwrite権限が必要です。PullfrogはOIDC経由で短命のGitHub App tokenを取得します。実行モデルはPullfrog consoleのrepository設定を使います。

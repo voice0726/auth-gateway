@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -15,6 +15,11 @@ import {
 
 const shaA = 'a'.repeat(40);
 const shaB = 'b'.repeat(40);
+const mainInstance = { ref: 'refs/heads/main', state: 'open', analysis_key: 'codeql.yml:scan', environment: '{}', category: 'go' };
+
+function prInstance(state, sha = shaA, ref = 'refs/pull/1/merge', context = mainInstance) {
+  return { ...context, ref, state, commit_sha: sha };
+}
 
 function alert(number, sha = shaA) {
   return { number, most_recent_instance: { commit_sha: sha } };
@@ -43,7 +48,9 @@ test('selection resumes an interrupted or retrying alert under the attempt cap',
 test('agent result must match the selected alert and include a PR for vulnerabilities', () => {
   const expected = { number: 9, analysis_sha: shaA };
   assert.equal(normalizeResult(JSON.stringify({ status: 'false_positive', alert_number: 9, analysis_sha: shaA, evidence: 'Guard guarantees the input is a fixed enum.' }), expected).status, 'false_positive');
-  assert.equal(normalizeResult(JSON.stringify({ status: 'false_positive', alert_number: 9, analysis_sha: shaB, evidence: 'Evidence.' }), expected).status, 'retry');
+  const mismatch = normalizeResult(JSON.stringify({ status: 'false_positive', alert_number: 9, analysis_sha: shaB, evidence: 'Evidence.' }), expected);
+  assert.equal(mismatch.status, 'retry');
+  assert.match(mismatch.evidence, /did not match the selected alert and analysis/);
   assert.equal(normalizeResult(JSON.stringify({ status: 'vulnerability', alert_number: 9, analysis_sha: shaA, evidence: 'Reachable input.' }), expected).status, 'retry');
 });
 
@@ -63,7 +70,9 @@ test('main-open alert is verified only by a current fixed PR instance and succes
   const result = evaluatePullRequest({
     checkRuns: [{ id: 1, name: 'test', status: 'completed', conclusion: 'success', app: { id: 7 } }],
     statuses: { state: 'pending', total_count: 0, statuses: [] },
-    instance: { state: 'fixed', commit_sha: shaA },
+    mainInstances: [mainInstance],
+    prInstances: [prInstance('fixed')],
+    prRef: 'refs/pull/1/merge',
     headSha: shaA,
   });
   assert.equal(result.disposition, 'verified');
@@ -73,7 +82,9 @@ test('stale PR analysis remains pending even when the old instance was fixed', (
   const result = evaluatePullRequest({
     checkRuns: [{ id: 1, name: 'test', status: 'completed', conclusion: 'success' }],
     statuses: { state: 'success', total_count: 1, statuses: [{ id: 3, context: 'legacy', state: 'success' }] },
-    instance: { state: 'fixed', commit_sha: shaB },
+    mainInstances: [mainInstance],
+    prInstances: [prInstance('fixed', shaB)],
+    prRef: 'refs/pull/1/merge',
     headSha: shaA,
   });
   assert.equal(result.disposition, 'pending');
@@ -83,7 +94,9 @@ test('a confirmed CI failure can trigger repair before a PR analysis arrives', (
   const result = evaluatePullRequest({
     checkRuns: [{ id: 1, name: 'test', status: 'completed', conclusion: 'failure' }],
     statuses: { state: 'failure', total_count: 1, statuses: [{ id: 3, context: 'test', state: 'failure' }] },
-    instance: null,
+    mainInstances: [mainInstance],
+    prInstances: [],
+    prRef: 'refs/pull/1/merge',
     headSha: shaA,
   });
   assert.deepEqual(result, { disposition: 'repair', reason: 'ci_failure', instanceCurrent: false, ciPassed: false });
@@ -91,13 +104,59 @@ test('a confirmed CI failure can trigger repair before a PR analysis arrives', (
 
 test('the newest run for a check replaces an older failure and pending status contexts block verification', () => {
   const checks = [
-    { id: 10, name: 'test', status: 'completed', conclusion: 'failure', app: { id: 7 }, external_id: 'job' },
-    { id: 11, name: 'test', status: 'completed', conclusion: 'success', app: { id: 7 }, external_id: 'job' },
+    { id: 10, name: 'test', status: 'completed', conclusion: 'failure', app: { id: 7 }, external_id: 'old-job-id' },
+    { id: 11, name: 'test', status: 'completed', conclusion: 'success', app: { id: 7 }, external_id: 'rerun-job-id' },
   ];
-  const verified = evaluatePullRequest({ checkRuns: checks, statuses: { state: 'pending', total_count: 0, statuses: [] }, instance: { state: 'fixed', commit_sha: shaA }, headSha: shaA });
+  const verified = evaluatePullRequest({ checkRuns: checks, statuses: { state: 'pending', total_count: 0, statuses: [] }, mainInstances: [mainInstance], prInstances: [prInstance('fixed')], prRef: 'refs/pull/1/merge', headSha: shaA });
   assert.equal(verified.disposition, 'verified');
-  const pending = evaluatePullRequest({ checkRuns: checks, statuses: { state: 'pending', total_count: 1, statuses: [{ id: 2, context: 'required', state: 'pending' }] }, instance: { state: 'fixed', commit_sha: shaA }, headSha: shaA });
+  const pending = evaluatePullRequest({ checkRuns: checks, statuses: { state: 'pending', total_count: 1, statuses: [{ id: 2, context: 'required', state: 'pending' }] }, mainInstances: [mainInstance], prInstances: [prInstance('fixed')], prRef: 'refs/pull/1/merge', headSha: shaA });
   assert.equal(pending.disposition, 'pending');
+});
+
+test('startup_failure is a confirmed failure for test and non-test checks', () => {
+  for (const name of ['test', 'CodeQL']) {
+    const result = evaluatePullRequest({
+      checkRuns: [{ id: 20, name, status: 'completed', conclusion: 'startup_failure', app: { id: 7 } }],
+      mainInstances: [mainInstance],
+      prInstances: [],
+      prRef: 'refs/pull/1/merge',
+      headSha: shaA,
+    });
+    assert.equal(result.disposition, 'repair', name);
+    assert.equal(result.reason, 'ci_failure', name);
+  }
+});
+
+test('all open main contexts need current fixed PR results, independent of API order', () => {
+  const secondContext = { ...mainInstance, analysis_key: 'codeql.yml:scan', environment: '{"language":"javascript"}', category: 'javascript' };
+  const mainInstances = [mainInstance, secondContext];
+  const fixed = prInstance('fixed', shaA, 'refs/pull/1/merge', mainInstance);
+  const open = prInstance('open', shaB, 'refs/pull/1/merge', secondContext);
+  for (const prInstances of [[fixed, open], [open, fixed]]) {
+    const result = evaluatePullRequest({ checkRuns: [], mainInstances, prInstances, prRef: 'refs/pull/1/merge', headSha: shaA, mergeSha: shaB });
+    assert.equal(result.disposition, 'repair');
+    assert.equal(result.reason, 'alert_open');
+  }
+  for (const prInstances of [[fixed, prInstance('open')], [prInstance('open'), fixed]]) {
+    const result = evaluatePullRequest({ checkRuns: [], mainInstances: [mainInstance], prInstances, prRef: 'refs/pull/1/merge', headSha: shaA });
+    assert.equal(result.disposition, 'repair');
+  }
+  const stale = evaluatePullRequest({ checkRuns: [], mainInstances, prInstances: [fixed, prInstance('fixed', 'c'.repeat(40), 'refs/pull/1/merge', secondContext)], prRef: 'refs/pull/1/merge', headSha: shaA, mergeSha: shaB });
+  assert.equal(stale.disposition, 'pending');
+  const absent = evaluatePullRequest({ checkRuns: [], mainInstances, prInstances: [fixed], prRef: 'refs/pull/1/merge', headSha: shaA, mergeSha: shaB });
+  assert.equal(absent.disposition, 'pending');
+  const ciSuccess = [{ id: 1, name: 'test', status: 'completed', conclusion: 'success' }];
+  const mixedShaResults = [
+    [prInstance('open', shaA), prInstance('fixed', shaB)],
+    [prInstance('fixed', shaB), prInstance('open', shaA)],
+    [prInstance('open', shaB), prInstance('fixed', shaA)],
+    [prInstance('fixed', shaA), prInstance('open', shaB)],
+  ];
+  for (const prInstances of mixedShaResults) {
+    const result = evaluatePullRequest({ checkRuns: ciSuccess, mainInstances: [mainInstance], prInstances, prRef: 'refs/pull/1/merge', headSha: shaA, mergeSha: shaB });
+    assert.equal(result.disposition, 'repair');
+    assert.equal(result.reason, 'alert_open');
+  }
 });
 
 test('prepare persists a processing reservation before handing off an alert', async () => {
@@ -166,7 +225,8 @@ test('scheduled prepare verifies an open main alert from a current fixed PR inst
     if (path.endsWith('/pulls')) return Response.json([{ number: 44, state: 'open', draft: true, base: { ref: 'main' }, head: prHead, merge_commit_sha: shaB, html_url: 'https://github.test/example/repo/pull/44', body: `<!-- code-scanning-alert:22 analysis:${shaA} -->` }]);
     if (path.endsWith('/check-runs')) return Response.json({ check_runs: [{ id: 1, name: 'test', status: 'completed', conclusion: 'success', app: { id: 7 } }] });
     if (path.endsWith('/status')) return Response.json({ state: 'pending', total_count: 0, statuses: [] });
-    if (path.endsWith('/instances')) return Response.json([{ ref: 'refs/pull/44/merge', state: 'fixed', commit_sha: shaA, location: { path: 'auth/session.go', start_line: 9 } }]);
+    if (path.endsWith('/instances') && parsed.searchParams.get('ref') === 'refs/heads/main') return Response.json([mainInstance]);
+    if (path.endsWith('/instances')) return Response.json([prInstance('fixed', shaA, 'refs/pull/44/merge')]);
     throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
   };
   Object.assign(process.env, {
@@ -206,6 +266,7 @@ test('scheduled prepare reserves same-PR repair when CI fails before CodeQL anal
     if (path.endsWith('/pulls')) return Response.json([{ number: 45, state: 'open', draft: true, base: { ref: 'main' }, head: prHead, merge_commit_sha: 'c'.repeat(40), html_url: 'https://github.test/example/repo/pull/45', body: `<!-- code-scanning-alert:23 analysis:${shaA} -->` }]);
     if (path.endsWith('/check-runs')) return Response.json({ check_runs: [{ id: 2, name: 'test', status: 'completed', conclusion: 'failure', app: { id: 7 } }] });
     if (path.endsWith('/status')) return Response.json({ state: 'failure', total_count: 1, statuses: [{ id: 3, context: 'test', state: 'failure' }] });
+    if (path.endsWith('/instances') && parsed.searchParams.get('ref') === 'refs/heads/main') return Response.json([mainInstance]);
     if (path.endsWith('/instances')) return Response.json([]);
     throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
   };
@@ -262,6 +323,44 @@ test('prepare recovers a validated PR created before an interrupted initial resu
     for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
     Object.assign(process.env, previousEnv);
     await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('prepare reconciles closed ledger PRs without recreating their alert', async () => {
+  for (const merged of [false, true]) {
+    const temp = await mkdtemp(join(tmpdir(), 'code-scanning-closed-pr-'));
+    const outputPath = join(temp, 'output');
+    const previousFetch = globalThis.fetch;
+    const previousEnv = { ...process.env };
+    const key = `31@${shaA}`;
+    let ledger = { version: 1, alerts: { [key]: { status: 'pending_pr', attempts: 1, pull_request: 56 } }, updated_at: null };
+    globalThis.fetch = async (url, options = {}) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith('/contents/ledger.json') && options.method === 'PUT') {
+        ledger = JSON.parse(Buffer.from(JSON.parse(options.body).content, 'base64').toString('utf8'));
+        return Response.json({ content: { sha: 'next-ledger-sha' } });
+      }
+      if (path.endsWith('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-sha' });
+      if (path.endsWith('/code-scanning/alerts')) return Response.json([{ number: 31, state: 'open', most_recent_instance: { commit_sha: shaA } }]);
+      if (path.endsWith('/pulls')) return Response.json([]);
+      if (path.endsWith('/pulls/56')) return Response.json({ number: 56, state: 'closed', merged, merged_at: merged ? '2026-10-11T00:00:00Z' : null });
+      throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
+    };
+    Object.assign(process.env, {
+      GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+      GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath, REQUESTED_MODE: 'scan',
+    });
+    try {
+      await main('prepare');
+      assert.equal(ledger.alerts[key].status, merged ? 'merged' : 'blocked');
+      if (!merged) assert.match(ledger.alerts[key].evidence, /closed without merging/);
+      assert.match(await readFile(outputPath, 'utf8'), /has_work=false/);
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+      Object.assign(process.env, previousEnv);
+      await rm(temp, { recursive: true, force: true });
+    }
   }
 });
 
@@ -374,5 +473,51 @@ test('an empty Pullfrog output is persisted as retrying or blocked at the attemp
     for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
     Object.assign(process.env, previousEnv);
     await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('normalized retry evidence survives finalization for empty, invalid, and incomplete output', async () => {
+  const cases = [
+    ['', 'Pullfrog result was not valid JSON.'],
+    ['{invalid', 'Pullfrog result was not valid JSON.'],
+    [JSON.stringify({ status: 'false_positive', alert_number: 32, analysis_sha: shaA }), 'Pullfrog result did not include evidence.'],
+  ];
+  for (const [raw, evidence] of cases) {
+    const temp = await mkdtemp(join(tmpdir(), 'code-scanning-normalized-retry-'));
+    const outputPath = join(temp, 'output');
+    const previousFetch = globalThis.fetch;
+    const previousEnv = { ...process.env };
+    const key = `32@${shaA}`;
+    let ledger = { version: 1, alerts: { [key]: { status: 'processing', attempts: 2 } }, updated_at: null };
+    globalThis.fetch = async (url, options = {}) => {
+      if (url.includes('/contents/ledger.json') && options.method === 'PUT') {
+        ledger = JSON.parse(Buffer.from(JSON.parse(options.body).content, 'base64').toString('utf8'));
+        return Response.json({ content: { sha: 'next-file-sha' } });
+      }
+      if (url.includes('/contents/ledger.json')) return Response.json({ content: Buffer.from(JSON.stringify(ledger)).toString('base64'), sha: 'ledger-file-sha' });
+      if (url.includes('/pulls?state=open&base=main')) return Response.json([]);
+      if (url.includes('/actions/workflows/code-scanning-agent-loop.yml/dispatches')) return new Response(null, { status: 204 });
+      throw new Error(`Unexpected fixture request ${options.method ?? 'GET'} ${url}`);
+    };
+    Object.assign(process.env, {
+      GH_TOKEN: 'fixture-token', GITHUB_REPOSITORY: 'example/repo', GITHUB_SHA: shaB,
+      GITHUB_API_URL: 'https://api.github.test', GITHUB_OUTPUT: outputPath,
+      EXPECTED_ALERT: Buffer.from(JSON.stringify({ number: 32, analysis_sha: shaA, attempt: 2 })).toString('base64'),
+      AGENT_RESULT: raw, TASK_MODE: 'scan',
+    });
+    try {
+      await main('normalize');
+      const normalized = (await readFile(outputPath, 'utf8')).match(/^result_b64=(.+)$/m)?.[1];
+      assert.ok(normalized);
+      process.env.AGENT_RESULT_B64 = normalized;
+      await main('finalize');
+      assert.equal(ledger.alerts[key].status, 'blocked');
+      assert.equal(ledger.alerts[key].evidence, evidence);
+    } finally {
+      globalThis.fetch = previousFetch;
+      for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+      Object.assign(process.env, previousEnv);
+      await rm(temp, { recursive: true, force: true });
+    }
   }
 });

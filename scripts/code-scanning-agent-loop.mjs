@@ -13,6 +13,10 @@ export function alertKey(alert) {
   return `${alert.number}@${alert.most_recent_instance?.commit_sha ?? ''}`;
 }
 
+function retryResult(expected, evidence) {
+  return { status: 'retry', alert_number: expected.number, analysis_sha: expected.analysis_sha, evidence };
+}
+
 export function selectAlert(alerts, ledger, openPRs) {
   const activeAlerts = new Set(openPRs.map((pr) => {
     const marker = pr.body?.match(markerPattern);
@@ -31,19 +35,19 @@ export function normalizeResult(raw, expected) {
   try {
     result = typeof raw === 'string' ? JSON.parse(raw) : raw;
   } catch {
-    return { status: 'retry', evidence: 'Pullfrog result was not valid JSON.' };
+    return retryResult(expected, 'Pullfrog result was not valid JSON.');
   }
   if (!result || !['vulnerability', 'false_positive', 'blocked', 'retry'].includes(result.status)) {
-    return { status: 'retry', evidence: 'Pullfrog result did not contain a supported status.' };
+    return retryResult(expected, 'Pullfrog result did not contain a supported status.');
   }
   if (typeof result.evidence !== 'string' || result.evidence.trim() === '') {
-    return { status: 'retry', evidence: 'Pullfrog result did not include evidence.' };
+    return retryResult(expected, 'Pullfrog result did not include evidence.');
   }
   if (result.alert_number !== expected.number || result.analysis_sha !== expected.analysis_sha) {
-    return { status: 'retry', evidence: 'Pullfrog result did not match the selected alert and analysis.' };
+    return retryResult(expected, 'Pullfrog result did not match the selected alert and analysis.');
   }
   if (result.status === 'vulnerability' && (!Number.isInteger(result.pull_request) || result.pull_request < 1)) {
-    return { status: 'retry', evidence: 'Vulnerability result did not include a pull request number.' };
+    return retryResult(expected, 'Vulnerability result did not include a pull request number.');
   }
   return result;
 }
@@ -52,10 +56,14 @@ export function analysisMatchesPullRequest(analyzedSha, headSha, mergeSha) {
   return Boolean(analyzedSha && (analyzedSha === headSha || analyzedSha === mergeSha));
 }
 
-export function evaluatePullRequest({ checkRuns, statuses = {}, instance, headSha, mergeSha }) {
+function instanceContextKey(instance) {
+  return JSON.stringify([instance.analysis_key ?? '', instance.environment ?? '', instance.category ?? '']);
+}
+
+export function evaluatePullRequest({ checkRuns, statuses = {}, mainInstances = [], prInstances = [], prRef, headSha, mergeSha }) {
   const latestChecks = new Map();
   for (const check of checkRuns) {
-    const key = `${check.app?.id ?? 'unknown'}:${check.name}:${check.external_id ?? ''}`;
+    const key = `${check.app?.id ?? 'unknown'}:${check.name}`;
     const previous = latestChecks.get(key);
     if (!previous || (check.id ?? 0) > (previous.id ?? 0)) latestChecks.set(key, check);
   }
@@ -67,17 +75,32 @@ export function evaluatePullRequest({ checkRuns, statuses = {}, instance, headSh
   }
   const commitStatuses = [...latestStatuses.values()];
   const statusFailure = commitStatuses.some((status) => ['failure', 'error'].includes(status.state));
-  const ciFailed = checks.some((check) => ['failure', 'cancelled', 'timed_out', 'action_required', 'stale'].includes(check.conclusion)) || statusFailure;
+  const ciFailed = checks.some((check) => ['failure', 'cancelled', 'timed_out', 'action_required', 'stale', 'startup_failure'].includes(check.conclusion)) || statusFailure;
   const testRuns = checks.filter((check) => check.name === 'test').sort((left, right) => (right.id ?? 0) - (left.id ?? 0));
   const testRun = testRuns[0];
   const pendingCommitStatus = (statuses.total_count ?? 0) > 0 && (statuses.state === 'pending' || commitStatuses.some((status) => status.state === 'pending'));
   const ciPending = !testRun || testRun.status !== 'completed' || checks.some((check) => check.status !== 'completed') || pendingCommitStatus;
   const statusesPassed = (statuses.total_count ?? 0) === 0 || (statuses.state === 'success' && commitStatuses.every((status) => status.state === 'success'));
   const ciPassed = !ciPending && !ciFailed && statusesPassed && testRun.conclusion === 'success';
-  const instanceCurrent = analysisMatchesPullRequest(instance?.commit_sha, headSha, mergeSha);
+  const mainOpenInstances = mainInstances.filter((instance) => instance.ref === 'refs/heads/main' && instance.state === 'open');
+  const requiredContexts = new Set(mainOpenInstances.map(instanceContextKey));
+  const currentPRInstances = prInstances.filter((instance) => instance.ref === prRef && analysisMatchesPullRequest(instance.commit_sha, headSha, mergeSha));
+  const currentByContext = new Map();
+  for (const instance of currentPRInstances) {
+    const key = instanceContextKey(instance);
+    const instances = currentByContext.get(key) ?? [];
+    instances.push(instance);
+    currentByContext.set(key, instances);
+  }
+  const instanceCurrent = requiredContexts.size > 0 && [...requiredContexts].every((key) => currentByContext.has(key));
+  const hasCurrentOpenInstance = currentPRInstances.some((instance) => instance.state === 'open');
+  const contextsFixed = requiredContexts.size > 0 && [...requiredContexts].every((key) => {
+    const instances = currentByContext.get(key) ?? [];
+    return instances.length > 0 && instances.every((instance) => instance.state === 'fixed');
+  });
   if (ciFailed) return { disposition: 'repair', reason: 'ci_failure', instanceCurrent, ciPassed: false };
-  if (instanceCurrent && instance?.state === 'open') return { disposition: 'repair', reason: 'alert_open', instanceCurrent, ciPassed };
-  if (instanceCurrent && instance?.state === 'fixed' && ciPassed) return { disposition: 'verified', reason: 'ci_and_codeql_pass', instanceCurrent, ciPassed };
+  if (hasCurrentOpenInstance) return { disposition: 'repair', reason: 'alert_open', instanceCurrent, ciPassed };
+  if (contextsFixed && ciPassed) return { disposition: 'verified', reason: 'ci_and_codeql_pass', instanceCurrent, ciPassed };
   return { disposition: 'pending', reason: 'checks_or_current_analysis_missing', instanceCurrent, ciPassed };
 }
 
@@ -173,9 +196,9 @@ async function getOpenAlerts(ctx, ref = 'refs/heads/main') {
   return listPages(ctx, `/repos/${ctx.owner}/${ctx.repo}/code-scanning/alerts?state=open&ref=${encodeURIComponent(ref)}`);
 }
 
-async function getPRAlertInstance(ctx, alertNumber, prNumber) {
-  const instances = await listPages(ctx, `/repos/${ctx.owner}/${ctx.repo}/code-scanning/alerts/${alertNumber}/instances?ref=${encodeURIComponent(`refs/pull/${prNumber}/merge`)}`);
-  return instances.find((instance) => instance.ref === `refs/pull/${prNumber}/merge`) ?? null;
+async function getAlertInstances(ctx, alertNumber, ref) {
+  const instances = await listPages(ctx, `/repos/${ctx.owner}/${ctx.repo}/code-scanning/alerts/${alertNumber}/instances?ref=${encodeURIComponent(ref)}`);
+  return instances.filter((instance) => instance.ref === ref);
 }
 
 function setOutput(name, value) {
@@ -213,6 +236,21 @@ async function prepare() {
   const mode = process.env.REQUESTED_MODE || 'scan';
   const requestedPR = Number(process.env.PR_NUMBER || '0');
   let changed = false;
+  const openPullNumbers = new Set(pulls.map((pr) => pr.number));
+  const pendingEntries = Object.entries(ledger.alerts ?? {}).filter(([, entry]) =>
+    ['pending_pr', 'followup_retrying', 'processing_followup'].includes(entry.status) && entry.pull_request && !openPullNumbers.has(entry.pull_request));
+  for (const [key, entry] of pendingEntries) {
+    const pr = await request(ctx, `/repos/${ctx.owner}/${ctx.repo}/pulls/${entry.pull_request}`);
+    if (pr.state !== 'closed') continue;
+    const merged = Boolean(pr.merged || pr.merged_at);
+    ledger.alerts[key] = {
+      ...entry,
+      status: merged ? 'merged' : 'blocked',
+      evidence: merged ? `PR #${pr.number} was merged outside the agent loop.` : `PR #${pr.number} was closed without merging; the human closure was respected and the alert was not recreated.`,
+      updated_at: new Date().toISOString(),
+    };
+    changed = true;
+  }
   const pendingPulls = mode === 'followup' ? pulls.filter((pr) => pr.number === requestedPR) : pulls;
   for (const pr of pendingPulls) {
     const marker = pr.body?.match(markerPattern);
@@ -235,8 +273,14 @@ async function prepare() {
     if (alreadyHandled) continue;
     const checkRuns = await listCheckRuns(ctx, pr.head.sha);
     const statuses = await request(ctx, `/repos/${ctx.owner}/${ctx.repo}/commits/${pr.head.sha}/status`);
-    const instance = await getPRAlertInstance(ctx, Number(marker[1]), pr.number);
-    const evaluation = evaluatePullRequest({ checkRuns, statuses, instance, headSha: pr.head.sha, mergeSha: pr.merge_commit_sha });
+    const prRef = `refs/pull/${pr.number}/merge`;
+    const [mainInstances, prInstances] = await Promise.all([
+      getAlertInstances(ctx, Number(marker[1]), 'refs/heads/main'),
+      getAlertInstances(ctx, Number(marker[1]), prRef),
+    ]);
+    const evaluation = evaluatePullRequest({ checkRuns, statuses, mainInstances, prInstances, prRef, headSha: pr.head.sha, mergeSha: pr.merge_commit_sha });
+    const currentPRInstances = prInstances.filter((item) => analysisMatchesPullRequest(item.commit_sha, pr.head.sha, pr.merge_commit_sha));
+    const instance = currentPRInstances.find((item) => item.state === 'open') ?? currentPRInstances[0] ?? null;
     if (evaluation.disposition === 'verified') {
       ledger.alerts[key] = { ...entry, status: 'verified', analyzed_sha: instance.commit_sha, verified_head_sha: pr.head.sha, updated_at: new Date().toISOString() };
       changed = true;
