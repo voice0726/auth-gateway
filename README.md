@@ -101,3 +101,17 @@ PostgreSQL統合テストには既存環境から分離した検証用インス�
 `.github/workflows/deploy.yml` は、Pull Requestで `gofmt` の確認、`go vet`、`go test -race ./...`、`go build ./...`、Dockerイメージのビルドを実行します。PostgreSQL統合テストも含みます。mainへのpushでは、テスト成功後にイメージを公開し、`migrate`・`cleanup` Jobのイメージを更新します。続けて `migrate` Jobを実行し、Cloud Runサービスを更新します。
 
 `deploy_workloads=true` の場合、Cloud Schedulerが `cleanup` を日次実行します。基盤は `infra/` のTerraformで管理します。手順は [infra/README.md](infra/README.md) を参照してください。
+
+[Code scanning agent loop](.github/workflows/code-scanning-agent-loop.yml) は毎時と手動で実行します。mainのopen CodeQL alertを1件ずつ処理します。脆弱性は回帰テスト付きのdraft PRにします。false positiveは根拠を記録し、dismiss判断を人に残します。判断できないalertは理由を記録して停止します。
+
+alert番号と解析commit SHAごとの履歴は `automation/code-scanning-ledger` branchに保存します。初回調査と同じPRでの修正を合わせ、最大2回実行します。PRの `test` check成功を確認します。mainでopenの解析contextごとに、PR instanceが `fixed` であることを確認します。instance解析SHAは現在のhead SHAまたはmerge SHAと一致する必要があります。条件を満たすalertは「修正検証済み（verified）」として記録します。verifiedのPRも毎回再評価します。結果未到着ならpending_prに戻します。チェック未完了やCodeQL解析未到着は試行を消費しません。次回scheduleで再評価します。
+
+追跡中alertがmainのopen一覧に無い場合、個別APIで状態を確認します。APIが `fixed` か `dismissed` なら、その履歴を終端化します。`instances`の状態や並び順から、alert全体の状態や最新解析を推定しません。API失敗時は履歴を更新せず、処理を失敗させます。
+
+finalizeは予約IDが一致する結果だけを反映します。古いworkflowの再実行結果は無視します。
+
+ledgerが追跡するPRの未merge閉鎖は、アラート番号単位で停止を記録します。mainの解析SHAが変わっても再作成しません。ready化した追跡中のopen PRがある間は、同じalertの新PR作成を抑止します。merge済みならmergedとして記録します。
+
+追跡PRがready化やmarker・branch不一致になった場合は、理由を記録してblockedにします。自動修正を停止します。
+
+workflowの `GITHUB_TOKEN` には Code scanning alerts、Checks、Commit statuses、Pull requestsのread権限が必要です。ContentsとActionsにはwrite権限が必要です。PullfrogはOIDC経由で短命のGitHub App tokenを取得します。実行モデルはPullfrog consoleのrepository設定を使います。
