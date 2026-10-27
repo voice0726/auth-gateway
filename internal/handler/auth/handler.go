@@ -34,7 +34,7 @@ func NewHandler(cfg config.Config, service *service.AuthService, logger *zap.Log
 
 func (s *Handler) Login(c echo.Context) error {
 	redirect := c.QueryParam("redirect")
-	if err := s.service.StartLogin(c.Response().Writer, c.Request(), redirect); err != nil {
+	if err := s.service.StartLogin(c.Response(), c.Request(), redirect); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "state store failed")
 	}
 	return nil
@@ -46,7 +46,7 @@ func (s *Handler) Callback(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	}
 	sessionID := uuid.NewString()
-	redirect, sess, err := s.service.HandleCallback(c.Response().Writer, c.Request(), sessionID)
+	redirect, sess, err := s.service.HandleCallback(c.Response(), c.Request(), sessionID)
 	if err != nil {
 		if c.Response().Committed {
 			return nil
@@ -78,7 +78,7 @@ func (s *Handler) Logout(c echo.Context) error {
 		return c.NoContent(http.StatusNoContent)
 	}
 
-	ok, err := s.service.HandleLogout(c.Response().Writer, c.Request(), sessionID, redirect)
+	ok, err := s.service.HandleLogout(c.Response(), c.Request(), sessionID, redirect)
 	if err != nil {
 		s.logger.Debug("logout request failed")
 		return echo.NewHTTPError(http.StatusInternalServerError, "logout failed")
