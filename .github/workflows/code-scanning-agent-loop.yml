@@ -71,7 +71,7 @@ jobs:
           PROMPT_B64: ${{ needs.prepare.outputs.prompt_b64 }}
       - id: agent
         continue-on-error: true
-        uses: pullfrog/pullfrog@ae4145b3d72b3f4aa045e2352dc6b2c7538daeeb
+        uses: pullfrog/pullfrog@03888dd0e402d745e855de7248b3d23271f73517
         with:
           prompt_file: ${{ steps.prompt.outputs.path }}
           timeout: 75m
