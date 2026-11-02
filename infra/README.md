@@ -30,7 +30,7 @@ DB は、shared-infra リポジトリが管理する共有 DB VM の `auth` デ�
 
    `.github/workflows/deploy.yml` はPull RequestでPostgreSQL付きのテストを実行します。mainへのpushではテスト成功後にイメージを公開し、migrate Jobを実行してからCloud Runサービスを更新します。
 
-3. 本番の設定 YAML に `db_host`、`db_port: 5432`、`db_sslmode: disable`、`db_password` を設定し、Secret Manager に新しいバージョンを登録する。DB ホストとパスワードは、shared-infra の `terraform output -raw db_host` と `terraform output -json db_passwords` の `auth-gateway` です。
+3. 本番の設定 YAML に `db_host`、`db_port: 5432`、`db_sslmode: require`、`db_password` を設定し、Secret Manager に新しいバージョンを登録する。共有 DB は TLS の接続だけを受け付けます。DB ホストとパスワードは、shared-infra の `terraform output -raw db_host` と `terraform output -json db_passwords` の `auth-gateway` です。
 
    ```sh
    gcloud secrets versions add gateway-config --data-file=prod.yaml
