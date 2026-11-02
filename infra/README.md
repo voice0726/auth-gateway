@@ -40,6 +40,15 @@ GCP プロジェクト `auth-gateway-511100` の基盤を Terraform で管理す
 
    以降の`plan`と`apply`でも`-var-file=production.tfvars`を指定します。`deploy_workloads`に既定値はないため、変数ファイルを指定しないとTerraformは値の入力を求めます。
 
+## 共有 DB への移行
+
+DB は shared-infra リポジトリの共有 DB VM へ移行中です。手順の全体は shared-infra の README の「移行手順」にあります。このリポジトリで行う作業は次の 2 つです。
+
+1. `production.tfvars` に `shared_db_network` を設定して apply し、shared-infra の VPC と peering を張ります。値は shared-infra の `terraform output -raw db_network` です。
+2. 本番の設定 YAML の `db_host` と `db_password` を共有 DB の値に替え、`gateway-config` に新しいバージョンを登録します。値は shared-infra の `terraform output -raw db_host` と `terraform output -json db_passwords` の `auth-gateway` です。
+
+移行が終わるまで、以下の DB VM のリソースは残します。削除は移行後に別の変更で行います。
+
 ## 管理外のもの
 
 - `auth.aknr.dev` の割り当てと DNS(Cloudflare)
