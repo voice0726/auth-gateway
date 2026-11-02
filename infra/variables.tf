@@ -56,3 +56,14 @@ variable "max_instances" {
   type    = number
   default = 2
 }
+
+variable "shared_db_network" {
+  description = "shared-infra の DB 用 VPC（projects/<id>/global/networks/<name>）。null なら peering を作らない"
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.shared_db_network == null || can(regex("^projects/[a-z][a-z0-9-]+/global/networks/[a-z][a-z0-9-]*$", var.shared_db_network))
+    error_message = "shared_db_network は projects/<id>/global/networks/<name> の形式にしてください。"
+  }
+}
