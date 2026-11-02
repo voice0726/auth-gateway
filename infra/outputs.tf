@@ -1,12 +1,3 @@
-output "db_host" {
-  value = google_compute_address.db.address
-}
-
-output "db_password" {
-  value     = random_password.db.result
-  sensitive = true
-}
-
 output "image_repository" {
   value = "${var.artifact_region}-docker.pkg.dev/${var.project_id}/${google_artifact_registry_repository.gateway.repository_id}"
 }

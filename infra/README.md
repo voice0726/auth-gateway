@@ -2,6 +2,8 @@
 
 GCP プロジェクト `auth-gateway-511100` の基盤を Terraform で管理する。
 
+DB は、shared-infra リポジトリが管理する共有 DB VM の `auth` データベースを使います。このリポジトリは、Cloud Run 用の VPC と、共有 DB の VPC との peering を持ちます。
+
 ## 初回手順
 
 1. state 用バケットを作る(Terraform の管理外)。
@@ -13,26 +15,28 @@ GCP プロジェクト `auth-gateway-511100` の基盤を Terraform で管理す
    gcloud storage buckets update gs://auth-gateway-511100-tfstate --versioning
    ```
 
-2. 基盤と検証用PostgreSQL VMを作る(`deploy_workloads=false`)。既定はFree Tier対象の `us-central1` / `e2-micro` です。Artifact Registryは既存の `asia-northeast1` に維持します。初回はワークロードを作らない値を明示します。
+2. 基盤を作る(`deploy_workloads=false`)。既定のリージョンは `us-central1` です。Artifact Registryは既存の `asia-northeast1` に維持します。初回はワークロードを作らない値を明示します。
 
    ```sh
    terraform init
    terraform import google_artifact_registry_repository.gateway \
      projects/auth-gateway-511100/locations/asia-northeast1/repositories/auth-gateway
-   terraform apply -var=deploy_workloads=false
+   terraform apply -var=deploy_workloads=false -var=shared_db_network=<db_network>
    ```
+
+   `<db_network>` は shared-infra の `terraform output -raw db_network` です。peering は、shared-infra 側も逆向きの peering を作ったときに `ACTIVE` になります。
 
    既存のArtifact RegistryがすでにTerraform stateにある場合、importは不要です。GitHub ActionsのWIFは、`main`上の`.github/workflows/deploy.yml`だけを信頼します。
 
    `.github/workflows/deploy.yml` はPull RequestでPostgreSQL付きのテストを実行します。mainへのpushではテスト成功後にイメージを公開し、migrate Jobを実行してからCloud Runサービスを更新します。
 
-3. DB VM の起動後、本番の設定 YAML に `db_host`、`db_port: 5432`、`db_sslmode: disable`、`db_password` を設定し、Secret Manager に新しいバージョンを登録する。DB ホストとパスワードは `terraform output -raw db_host` と `terraform output -raw db_password` で確認できます。パスワードは VM 起動時に Secret Manager から取得します。
+3. 本番の設定 YAML に `db_host`、`db_port: 5432`、`db_sslmode: disable`、`db_password` を設定し、Secret Manager に新しいバージョンを登録する。DB ホストとパスワードは、shared-infra の `terraform output -raw db_host` と `terraform output -json db_passwords` の `auth-gateway` です。
 
    ```sh
    gcloud secrets versions add gateway-config --data-file=prod.yaml
    ```
 
-4. PostgreSQL の起動と接続を確認してから、イメージを Artifact Registry に push し、production用の変数ファイルを使ってapplyする。Cloud RunとJobは専用のDirect VPCサブネットを使います。
+4. イメージを Artifact Registry に push し、production用の変数ファイルを使ってapplyする。Cloud RunとJobは専用のDirect VPCサブネットを使います。
 
    ```sh
    terraform apply -var-file=production.tfvars -var image=<image_repository>/auth-gateway:<tag>
@@ -40,25 +44,26 @@ GCP プロジェクト `auth-gateway-511100` の基盤を Terraform で管理す
 
    以降の`plan`と`apply`でも`-var-file=production.tfvars`を指定します。`deploy_workloads`に既定値はないため、変数ファイルを指定しないとTerraformは値の入力を求めます。
 
-## 共有 DB への移行
+## 設定 YAML の更新
 
-DB は shared-infra リポジトリの共有 DB VM へ移行中です。手順の全体は shared-infra の README の「移行手順」にあります。このリポジトリで行う作業は次の 2 つです。
+gateway は設定 YAML を起動時に 1 回だけ読みます。そのため、`gateway-config` に新しいバージョンを登録したら、`config-version` の label を付けて新しいリビジョンを作ります。Terraform はこの label の差分を無視します。
 
-1. `production.tfvars` に `shared_db_network` を設定して apply し、shared-infra の VPC と peering を張ります。値は shared-infra の `terraform output -raw db_network` です。
-2. 本番の設定 YAML の `db_host` と `db_password` を共有 DB の値に替え、`gateway-config` に新しいバージョンを登録します。値は shared-infra の `terraform output -raw db_host` と `terraform output -json db_passwords` の `auth-gateway` です。登録は、shared-infra の手順で書き込みを止めてデータを移し終えてから行います。gateway は設定 YAML を起動時に 1 回だけ読むので、登録の後に `config-version` の label を付けて新しいリビジョンを作ります（コマンドは shared-infra の README の「5. 接続先を替える」）。
+```sh
+gcloud secrets versions add gateway-config --project auth-gateway-511100 --data-file=prod.yaml
+gcloud run services update auth-gateway --project auth-gateway-511100 --region us-central1 \
+  --update-labels config-version=<VERSION>
+```
 
-`database.tf` の DB VM のリソースは、移行が終わるまで残します。移行後に別の変更で削除します。
+migrate Job と cleanup Job は、実行のたびに最新のバージョンを読みます。
 
 ## 管理外のもの
 
 - `auth.aknr.dev` の割り当てと DNS(Cloudflare)
 - ZITADEL Cloud のテナントとアプリ登録
 - GitHub Actions のワークフローファイル。認証先のWIF設定とIAM権限はTerraformで管理します。
+- DB VM。shared-infra リポジトリで管理します。
 
-## 検証用 DB の制約
+## 制約
 
-- PostgreSQL は Compute Engine `e2-micro` と30 GBの標準ディスクで動かします。Free Tierの対象リージョンと月間上限を超えた利用、外部IPv4、通信量には料金が発生します。
-- DB はバックアップしません。VMまたはディスクを削除した場合、DBを作り直します。
-- TerraformはDB VMの置換・削除を要求するplanを止めます。VMを意図的に作り直す場合は、`prevent_destroy`を一時的に外してplanを確認します。
-- DB VMとCloud Runは別サブネットに配置します。ファイアウォールとPostgreSQLはCloud Run専用サブネットからの5432番接続を許可します。同サブネットに接続できるCloud RunサービスとJobsが接続元になります。SSHはIAP経由に限定します。
-- `region` を変更するとCloud RunとDBの配置先が変わります。Free Tier対象外のリージョンではVM料金が発生します。
+- Cloud Run と Job は、専用サブネット(`cloud_run_subnet_cidr`)から Direct VPC egress で共有 DB に接続します。共有 DB の `pg_hba.conf` は、`auth` への接続をこのサブネットからだけ許可します。サブネットの範囲を変えるときは、shared-infra の `production.tfvars` の `client_cidr` も合わせて変えます。
+- `region` を変更するとCloud Runの配置先が変わります。共有 DB は `us-central1` にあります。

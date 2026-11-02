@@ -8,21 +8,10 @@ variable "region" {
   default = "us-central1"
 }
 
-variable "zone" {
-  type        = string
-  description = "DB VMのゾーン。未指定ならregion-aを使う"
-  default     = null
-}
-
 variable "artifact_region" {
   description = "既存Artifact Registryを維持するリージョン"
   type        = string
   default     = "asia-northeast1"
-}
-
-variable "db_subnet_cidr" {
-  type    = string
-  default = "10.20.0.0/24"
 }
 
 variable "cloud_run_subnet_cidr" {
@@ -47,11 +36,6 @@ variable "deploy_workloads" {
   type        = bool
 }
 
-variable "db_machine_type" {
-  type    = string
-  default = "e2-micro"
-}
-
 variable "max_instances" {
   type    = number
   default = 2
@@ -63,7 +47,7 @@ variable "shared_db_network" {
   default     = null
 
   validation {
-    condition     = var.shared_db_network == null || can(regex("^projects/[a-z][a-z0-9-]+/global/networks/[a-z][a-z0-9-]*$", var.shared_db_network))
-    error_message = "shared_db_network は projects/<id>/global/networks/<name> の形式にしてください。"
+    condition     = var.shared_db_network == null ? !var.deploy_workloads : can(regex("^projects/[a-z][a-z0-9-]+/global/networks/[a-z][a-z0-9-]*$", var.shared_db_network))
+    error_message = "shared_db_network は projects/<id>/global/networks/<name> の形式にしてください。deploy_workloads=true には必須です。"
   }
 }
