@@ -8,21 +8,10 @@ variable "region" {
   default = "us-central1"
 }
 
-variable "zone" {
-  type        = string
-  description = "DB VMのゾーン。未指定ならregion-aを使う"
-  default     = null
-}
-
 variable "artifact_region" {
   description = "既存Artifact Registryを維持するリージョン"
   type        = string
   default     = "asia-northeast1"
-}
-
-variable "db_subnet_cidr" {
-  type    = string
-  default = "10.20.0.0/24"
 }
 
 variable "cloud_run_subnet_cidr" {
@@ -45,11 +34,6 @@ variable "image" {
 variable "deploy_workloads" {
   description = "gateway-config の secret version を登録した後に true にする"
   type        = bool
-}
-
-variable "db_machine_type" {
-  type    = string
-  default = "e2-micro"
 }
 
 variable "max_instances" {
