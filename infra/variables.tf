@@ -47,7 +47,7 @@ variable "shared_db_network" {
   default     = null
 
   validation {
-    condition     = var.shared_db_network == null || can(regex("^projects/[a-z][a-z0-9-]+/global/networks/[a-z][a-z0-9-]*$", var.shared_db_network))
-    error_message = "shared_db_network は projects/<id>/global/networks/<name> の形式にしてください。"
+    condition     = var.shared_db_network == null ? !var.deploy_workloads : can(regex("^projects/[a-z][a-z0-9-]+/global/networks/[a-z][a-z0-9-]*$", var.shared_db_network))
+    error_message = "shared_db_network は projects/<id>/global/networks/<name> の形式にしてください。deploy_workloads=true には必須です。"
   }
 }
