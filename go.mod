@@ -8,7 +8,7 @@ require (
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/labstack/echo/v4 v4.16.3
 	github.com/thessem/zap-prettyconsole v0.7.0
-	github.com/zitadel/oidc/v3 v3.51.16
+	github.com/zitadel/oidc/v3 v3.51.17
 	github.com/zitadel/zitadel-go/v3 v3.30.0
 	go.uber.org/fx v1.24.0
 	go.uber.org/zap v1.28.0
