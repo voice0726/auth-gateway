@@ -8,7 +8,7 @@ require (
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/labstack/echo/v4 v4.16.3
 	github.com/thessem/zap-prettyconsole v0.7.0
-	github.com/zitadel/oidc/v3 v3.51.17
+	github.com/zitadel/oidc/v3 v3.52.0
 	github.com/zitadel/zitadel-go/v3 v3.30.0
 	go.uber.org/fx v1.24.0
 	go.uber.org/zap v1.28.0
@@ -21,7 +21,7 @@ require (
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.9 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
@@ -47,7 +47,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/net v0.60.0 // indirect
-	golang.org/x/oauth2 v0.37.0 // indirect
+	golang.org/x/oauth2 v0.38.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
