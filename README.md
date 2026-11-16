@@ -35,6 +35,8 @@ ZITADELの本人確認を使い、アプリごとに独立したCookieセッシ�
 
 Cookie名は `session_<アプリID>`、Domainなし、Path `/`、HttpOnlyです。アプリごとに暗号鍵を分け、別アプリのCookieを名前だけ変更しても使用できないようにします。OIDCライブラリの一時Cookieも分離するため、アプリには異なるホスト名が必要です。`localhost` のポート違いだけでは分離しません。
 
+`origin` が `https://` のアプリ、または `cookie_same_site: "None"` の構成では `cookie_secure: true` が必須です。`false` のままだと起動時に拒否します（Cookieを平文のHTTPで送らないため）。
+
 ログイン後の遷移先は同一オリジンの相対パスに限定します。POSTログアウトは対象アプリのOriginを検証します。旧 `/auth/<アプリID>/*`、`/internal/<アプリID>/session` のパスは提供しません。
 
 ## 設定と起動
