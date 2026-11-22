@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 )
@@ -74,5 +75,37 @@ func TestDefaultRedirect(t *testing.T) {
 	}
 	if got := cfg.ForApplication(Application{DefaultRedirect: "/tickets"}).DefaultRedirect; got != "/tickets" {
 		t.Fatalf("configured default_redirect=%q", got)
+	}
+}
+
+func TestCookieSecureRequired(t *testing.T) {
+	t.Setenv("CONFIG_PATH", "../../config/dev.yaml")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		origin   string
+		secure   bool
+		sameSite http.SameSite
+		wantErr  bool
+	}{
+		{"http origin without secure", "http://react.localtest.me", false, http.SameSiteLaxMode, false},
+		{"https origin without secure", "https://react.example.com", false, http.SameSiteLaxMode, true},
+		{"https origin with secure", "https://react.example.com", true, http.SameSiteLaxMode, false},
+		{"same-site none without secure", "http://react.localtest.me", false, http.SameSiteNoneMode, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := cfg
+			c.Applications = []Application{cfg.Applications[0]}
+			c.Applications[0].Origin = tc.origin
+			c.CookieSecure = tc.secure
+			c.CookieSameSite = tc.sameSite
+			err := validateApplications(c)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
 	}
 }

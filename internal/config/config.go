@@ -216,6 +216,10 @@ func validate(cfg Config) error {
 	if cfg.CookieName == "" {
 		return errors.New("cookie_name is required")
 	}
+	// HTTPS のアプリでセッション Cookie を平文の HTTP に載せない。SameSite=None はブラウザが Secure を必須にする
+	if !cfg.CookieSecure && (strings.HasPrefix(strings.ToLower(cfg.FrontendOrigin), "https://") || cfg.CookieSameSite == http.SameSiteNoneMode) {
+		return errors.New("cookie_secure must be true when frontend_origin is https or cookie_same_site is None")
+	}
 	if cfg.LogLevel == "" {
 		return errors.New("log_level is required")
 	}
