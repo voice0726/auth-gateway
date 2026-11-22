@@ -22,6 +22,8 @@ DB は、shared-infra リポジトリが管理する共有 DB VM の `auth` デ�
    terraform apply -var=deploy_workloads=false -var=shared_db_network=<db_network>
    ```
 
+   旧プロジェクト（`auth-gateway-511100`）のバケットで init 済みの checkout では、`terraform init -reconfigure` を実行します。`-migrate-state` は使いません。旧プロジェクトの state を新しいバケットへ写すと、Terraform が旧プロジェクトのリソースを管理対象として扱うためです。
+
    `<db_network>` は shared-infra の `terraform output -raw db_network` です。peering は、shared-infra 側も逆向きの peering を作ったときに `ACTIVE` になります。
 
    GitHub ActionsのWIFは、`main`上の`.github/workflows/deploy.yml`だけを信頼します。
