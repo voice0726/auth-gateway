@@ -1,6 +1,6 @@
 # infra
 
-GCP プロジェクト `auth-gateway-511100` の基盤を Terraform で管理する。
+GCP プロジェクト `auth-gateway-583116` の基盤を Terraform で管理する。
 
 DB は、shared-infra リポジトリが管理する共有 DB VM の `auth` データベースを使います。このリポジトリは、Cloud Run 用の VPC と、共有 DB の VPC との peering を持ちます。
 
@@ -9,24 +9,22 @@ DB は、shared-infra リポジトリが管理する共有 DB VM の `auth` デ�
 1. state 用バケットを作る(Terraform の管理外)。
 
    ```sh
-   gcloud storage buckets create gs://auth-gateway-511100-tfstate \
-     --project auth-gateway-511100 --location asia-northeast1 \
+   gcloud storage buckets create gs://auth-gateway-583116-tfstate \
+     --project auth-gateway-583116 --location us-central1 \
      --uniform-bucket-level-access --public-access-prevention
-   gcloud storage buckets update gs://auth-gateway-511100-tfstate --versioning
+   gcloud storage buckets update gs://auth-gateway-583116-tfstate --versioning
    ```
 
-2. 基盤を作る(`deploy_workloads=false`)。既定のリージョンは `us-central1` です。Artifact Registryは既存の `asia-northeast1` に維持します。初回はワークロードを作らない値を明示します。
+2. 基盤を作る(`deploy_workloads=false`)。リージョンは Cloud Run・Artifact Registry とも `us-central1` です。初回はワークロードを作らない値を明示します。
 
    ```sh
    terraform init
-   terraform import google_artifact_registry_repository.gateway \
-     projects/auth-gateway-511100/locations/asia-northeast1/repositories/auth-gateway
    terraform apply -var=deploy_workloads=false -var=shared_db_network=<db_network>
    ```
 
    `<db_network>` は shared-infra の `terraform output -raw db_network` です。peering は、shared-infra 側も逆向きの peering を作ったときに `ACTIVE` になります。
 
-   既存のArtifact RegistryがすでにTerraform stateにある場合、importは不要です。GitHub ActionsのWIFは、`main`上の`.github/workflows/deploy.yml`だけを信頼します。
+   GitHub ActionsのWIFは、`main`上の`.github/workflows/deploy.yml`だけを信頼します。
 
    `.github/workflows/deploy.yml` はPull RequestでPostgreSQL付きのテストを実行します。mainへのpushではテスト成功後にイメージを公開し、migrate Jobを実行してからCloud Runサービスを更新します。
 
@@ -49,8 +47,8 @@ DB は、shared-infra リポジトリが管理する共有 DB VM の `auth` デ�
 gateway は設定 YAML を起動時に 1 回だけ読みます。そのため、`gateway-config` に新しいバージョンを登録したら、`config-version` の label を付けて新しいリビジョンを作ります。Terraform はこの label の差分を無視します。
 
 ```sh
-gcloud secrets versions add gateway-config --project auth-gateway-511100 --data-file=prod.yaml
-gcloud run services update auth-gateway --project auth-gateway-511100 --region us-central1 \
+gcloud secrets versions add gateway-config --project auth-gateway-583116 --data-file=prod.yaml
+gcloud run services update auth-gateway --project auth-gateway-583116 --region us-central1 \
   --update-labels config-version=<VERSION>
 ```
 

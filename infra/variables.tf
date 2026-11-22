@@ -1,6 +1,6 @@
 variable "project_id" {
   type    = string
-  default = "auth-gateway-511100"
+  default = "auth-gateway-583116"
 }
 
 variable "region" {
@@ -9,9 +9,8 @@ variable "region" {
 }
 
 variable "artifact_region" {
-  description = "既存Artifact Registryを維持するリージョン"
-  type        = string
-  default     = "asia-northeast1"
+  type    = string
+  default = "us-central1"
 }
 
 variable "cloud_run_subnet_cidr" {

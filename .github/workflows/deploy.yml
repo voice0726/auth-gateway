@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  PROJECT_ID: auth-gateway-511100
+  PROJECT_ID: auth-gateway-583116
   REGION: us-central1
 
 jobs:
@@ -72,7 +72,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      IMAGE: asia-northeast1-docker.pkg.dev/auth-gateway-511100/auth-gateway/auth-gateway:${{ github.sha }}
+      IMAGE: us-central1-docker.pkg.dev/auth-gateway-583116/auth-gateway/auth-gateway:${{ github.sha }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -80,8 +80,8 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
-          workload_identity_provider: projects/942082409962/locations/global/workloadIdentityPools/github/providers/github
-          service_account: gateway-deploy@auth-gateway-511100.iam.gserviceaccount.com
+          workload_identity_provider: projects/744399103114/locations/global/workloadIdentityPools/github/providers/github
+          service_account: gateway-deploy@auth-gateway-583116.iam.gserviceaccount.com
 
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
@@ -90,7 +90,7 @@ jobs:
 
       - name: Build and publish image
         run: |
-          gcloud auth configure-docker asia-northeast1-docker.pkg.dev --quiet
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
           docker build --tag "$IMAGE" .
           docker push "$IMAGE"
 

@@ -13,7 +13,7 @@ terraform {
   }
 
   backend "gcs" {
-    bucket = "auth-gateway-511100-tfstate"
+    bucket = "auth-gateway-583116-tfstate"
     prefix = "infra"
   }
 }
