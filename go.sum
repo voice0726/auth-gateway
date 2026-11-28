@@ -171,8 +171,8 @@ github.com/valyala/fasttemplate v1.2.2/go.mod h1:KHLXt3tVN2HBp8eijSv/kGJopbvo7S+
 github.com/yuin/goldmark v1.3.5/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1Zlc8k=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
 github.com/zenazn/goji v0.9.0/go.mod h1:7S9M489iMyHBNxwZnk9/EHS098H4/F6TATF2mIxtB1Q=
-github.com/zitadel/oidc/v3 v3.52.0 h1:UWIDloHmoi8wFM6oLW94OlxQmf/CYQU2tZxTQhxQWQU=
-github.com/zitadel/oidc/v3 v3.52.0/go.mod h1:jLFGXtanUQnh7H6GTrmqbMTooFfkBM+Nt8yUveFbsGs=
+github.com/zitadel/oidc/v3 v3.53.0 h1:wueKcGaQ6KBmVbrZcGZQvZ2YCkTZ9Vyw58I1r9Ebjps=
+github.com/zitadel/oidc/v3 v3.53.0/go.mod h1:+Iu1z9HFf2w1UaZzoXOq/l54M+MIQQntCankBczWeu8=
 github.com/zitadel/schema v1.3.2 h1:gfJvt7dOMfTmxzhscZ9KkapKo3Nei3B6cAxjav+lyjI=
 github.com/zitadel/schema v1.3.2/go.mod h1:IZmdfF9Wu62Zu6tJJTH3UsArevs3Y4smfJIj3L8fzxw=
 github.com/zitadel/zitadel-go/v3 v3.30.1 h1:Ra9FtVC2MAX3PdZN6Gbj8+NckedKDpfdcEfdio0wITA=
